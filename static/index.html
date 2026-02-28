@@ -27,16 +27,16 @@
                 </div>
             </div>
             <div class="pdf-controls">
-                <button class="btn btn-secondary" onclick="previousPage()">◀ Previous</button>
+                <button id="prevPageBtn" class="btn btn-secondary">◀ Previous</button>
                 <div class="pdf-page-info">
                     <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
                 </div>
-                <button class="btn btn-secondary" onclick="nextPage()">Next ▶</button>
+                <button id="nextPageBtn" class="btn btn-secondary">Next ▶</button>
                 <div class="pdf-zoom-controls">
-                    <button class="btn btn-secondary" onclick="zoomOut()" title="Zoom Out">🔍−</button>
-                    <span id="zoomLevel" class="zoom-level">100%</span>
-                    <button class="btn btn-secondary" onclick="zoomIn()" title="Zoom In">🔍+</button>
-                    <button class="btn btn-secondary" onclick="resetZoom()" title="Reset Zoom">⟲</button>
+                    <button id="zoomOutBtn" class="btn btn-secondary" title="Zoom Out">🔍−</button>
+                    <span id="zoomLevel" class="zoom-level">150%</span>
+                    <button id="zoomInBtn" class="btn btn-secondary" title="Zoom In">🔍+</button>
+                    <button id="resetZoomBtn" class="btn btn-secondary" title="Reset Zoom">⟲</button>
                 </div>
             </div>
         </div>

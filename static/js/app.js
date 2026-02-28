@@ -3,7 +3,7 @@ import { startReading, pauseReading, resumeReading } from './reading.js';
 import { showQuestionInput, hideQuestionInput, submitQuestion, handleVoiceInput } from './questions.js';
 import { previousPage, nextPage, zoomIn, zoomOut, resetZoom } from './pdfViewer.js';
 
-// Make functions globally available for onclick handlers
+// Make functions globally available for onclick handlers IMMEDIATELY
 window.uploadPDF = uploadPDF;
 window.goHome = goHome;
 window.startReading = startReading;
@@ -18,6 +18,11 @@ window.nextPage = nextPage;
 window.zoomIn = zoomIn;
 window.zoomOut = zoomOut;
 window.resetZoom = resetZoom;
+
+console.log('✅ All functions attached to window');
+console.log('zoomIn available:', typeof window.zoomIn);
+console.log('zoomOut available:', typeof window.zoomOut);
+console.log('resetZoom available:', typeof window.resetZoom);
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -65,12 +70,20 @@ function initializeUploadHandlers() {
         }
     });
     
-    // Debug: Log when functions are attached
-    console.log('Functions attached to window:', {
-        zoomIn: typeof window.zoomIn,
-        zoomOut: typeof window.zoomOut,
-        resetZoom: typeof window.resetZoom
-    });
+    // PDF zoom controls
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const resetZoomBtn = document.getElementById('resetZoomBtn');
+    const prevPageBtn = document.getElementById('prevPageBtn');
+    const nextPageBtn = document.getElementById('nextPageBtn');
+    
+    if (zoomInBtn) zoomInBtn.addEventListener('click', zoomIn);
+    if (zoomOutBtn) zoomOutBtn.addEventListener('click', zoomOut);
+    if (resetZoomBtn) resetZoomBtn.addEventListener('click', resetZoom);
+    if (prevPageBtn) prevPageBtn.addEventListener('click', previousPage);
+    if (nextPageBtn) nextPageBtn.addEventListener('click', nextPage);
+    
+    console.log('✅ PDF controls initialized');
 }
 
 function initializeKeyboardShortcuts() {
