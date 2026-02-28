@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from anthropic import Anthropic
 from agents import SessionState, handle_start, handle_interrupt, handle_resume, get_session_summary
 from rag import DocumentRAG
 from podcast import generate_podcast_mp3
@@ -292,14 +293,15 @@ async def interrupt(req: InterruptRequest):
         audio = text_to_speech(result["answer"])
         response["audio_b64"] = audio.hex() if audio else None
     
-    if "image" in req.response_types and result.get("visual_prompt"):
-        image_url = generate_image(result["visual_prompt"])
+    if "image" in req.response_types:
+        prompt = result.get("visual_prompt") or result["answer"] or req.question[:200]
+        image_url = generate_image(prompt)
         response["image_url"] = image_url
     
-    if "video" in req.response_types and result.get("visual_prompt"):
-        # For now, video generation is not implemented
-        # Could use Runware's video generation API in the future
-        response["video_url"] = None
+    if "video" in req.response_types:
+        prompt = result.get("visual_prompt") or result["answer"] or req.question[:200]
+        video_url = generate_video(prompt)
+        response["video_url"] = video_url
 
     return response
 
@@ -372,6 +374,47 @@ async def export_podcast(req: ExportPodcastRequest):
         }
     except Exception as e:
         print(f"Podcast export error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+def _generate_video_overview_prompt(full_text: str) -> str:
+    """Use Claude to create a short video prompt summarizing the paper."""
+    text = full_text[:16_000] + ("..." if len(full_text) > 16_000 else "")
+    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        system="""You create short prompts for AI video generation. Given a research paper summary, output 2-3 sentences describing a visual overview: key concept, main finding, or central idea. Describe what to SHOW (diagrams, animations, concepts). Be concrete. No narration text—just visual description. Output ONLY the prompt, nothing else.""",
+        messages=[{"role": "user", "content": text}],
+        temperature=0.5,
+    )
+    return response.content[0].text.strip()[:500]
+
+
+class ExportVideoOverviewRequest(BaseModel):
+    session_id: str = "default"
+
+
+@app.post("/export-video-overview")
+async def export_video_overview(req: ExportVideoOverviewRequest):
+    """Generate a 5-second video overview of the paper. Takes 2–4 minutes."""
+    print("Video overview: Request received...")
+    full_text = full_texts.get(req.session_id, "")
+    if not full_text:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No document found. Upload a PDF first."},
+        )
+
+    try:
+        prompt = _generate_video_overview_prompt(full_text)
+        print(f"Video overview: Prompt: {prompt[:80]}...")
+        video_url = generate_video(prompt, max_wait_seconds=300)
+        if not video_url:
+            return JSONResponse(status_code=500, content={"error": "Video generation failed"})
+        return {"video_url": video_url}
+    except Exception as e:
+        print(f"Video overview error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 

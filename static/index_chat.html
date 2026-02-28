@@ -9,129 +9,89 @@
     <link rel="stylesheet" href="/static/css/chat.css">
 </head>
 <body>
-    <div class="main-layout" id="mainLayout">
-        <!-- PDF Viewer -->
-        <div id="pdfViewerContainer" class="pdf-viewer-container panel-left hidden">
-            <div class="session-controls">
-                <h2 style="color: #667eea; margin: 0;">📄 Document</h2>
-                <button class="home-btn" onclick="goHome()">🏠 Home</button>
-            </div>
-            <div class="pdf-canvas-wrapper">
-                <div class="pdf-display">
-                    <div id="readingIndicator" class="reading-indicator hidden">
-                        🎯 Reading this section...
-                    </div>
-                    <div id="pdfContainer" class="pdf-container">
-                        <canvas id="pdfCanvas"></canvas>
-                        <div id="textLayer" class="textLayer"></div>
-                    </div>
+    <div class="main-layout main-layout-three-panel" id="mainLayout">
+        <!-- Panel 1: Sources -->
+        <div id="sourcesPanel" class="panel panel-sources">
+            <div id="uploadSection" class="sources-content">
+                <div class="sources-header">
+                    <h2>📄 Sources</h2>
                 </div>
-            </div>
-            <div class="pdf-controls">
-                <button id="prevPageBtn" class="btn btn-secondary">◀ Previous</button>
-                <div class="pdf-page-info">
-                    <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
-                </div>
-                <button id="nextPageBtn" class="btn btn-secondary">Next ▶</button>
-                <div class="pdf-zoom-controls">
-                    <button id="zoomOutBtn" class="btn btn-secondary" title="Zoom Out">🔍−</button>
-                    <span id="zoomLevel" class="zoom-level">150%</span>
-                    <button id="zoomInBtn" class="btn btn-secondary" title="Zoom In">🔍+</button>
-                    <button id="resetZoomBtn" class="btn btn-secondary" title="Reset Zoom">⟲</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Resizable divider -->
-        <div id="panelResizer" class="panel-resizer hidden" title="Drag to resize"></div>
-
-        <!-- Chat Panel -->
-        <div class="container sidebar panel-right">
-            <!-- Upload Section -->
-            <div id="uploadSection">
-                <div class="chat-header">
-                    <h1>📚 PaperMind</h1>
-                    <p>AI-Powered Reading Assistant for ADHD</p>
-                </div>
-                
                 <div class="upload-section">
-                    <h2>📄 Upload Your PDF</h2>
+                    <h3>Upload Your PDF</h3>
                     <p style="margin: 20px 0; color: #666;">Drag and drop your research paper here, or click to browse</p>
-                    <input type="file" id="fileInput" accept=".pdf">
-                    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
-                        Choose PDF File
-                    </button>
+                    <input type="file" id="fileInput" accept=".pdf" style="display:none">
+                    <label for="fileInput" class="upload-btn" style="cursor:pointer;display:inline-block">
+                        + Add sources
+                    </label>
                     <div id="uploadStatus" class="loading hidden">
                         <div class="spinner"></div>
                         <p>Processing your PDF...</p>
                     </div>
                 </div>
             </div>
-
-            <!-- Chat Section -->
-            <div id="chatSection" class="chat-container hidden">
-                <div class="chat-header">
-                    <h1>📚 PaperMind</h1>
-                    <p>Ask me anything about the paper</p>
-                    <div class="chat-header-buttons">
-                        <button id="exportPodcastBtn" class="home-btn" onclick="exportPodcast()" title="Generate podcast (MP3) from paper">🎙️ Export as Podcast</button>
-                        <button class="home-btn" onclick="goHome()">🏠 End Session</button>
+            <div id="pdfViewerContainer" class="pdf-viewer-container hidden">
+                <div class="session-controls">
+                    <h2 style="color: #667eea; margin: 0;">📄 Sources</h2>
+                    <button id="playPauseBtn" class="btn btn-primary play-pause-btn" onclick="togglePlayPause()" title="Play / Pause reading">▶️ Start Reading</button>
+                    <button class="home-btn" onclick="goHome()">🏠 End Session</button>
+                </div>
+                <div class="pdf-canvas-wrapper">
+                    <div class="pdf-display">
+                        <div id="readingIndicator" class="reading-indicator hidden">
+                            🎯 Reading this section...
+                        </div>
+                        <div id="pdfContainer" class="pdf-container">
+                            <canvas id="pdfCanvas"></canvas>
+                            <div id="textLayer" class="textLayer"></div>
+                        </div>
                     </div>
                 </div>
-
-                <!-- Reading Controls -->
-                <div class="reading-controls">
-                    <button id="startBtn" class="btn btn-primary" onclick="startReading()">▶️ Start Reading</button>
-                    <button id="pauseBtn" class="btn btn-secondary hidden" onclick="pauseReading()">⏸️ Pause</button>
-                    <button id="resumeBtn" class="btn btn-primary hidden" onclick="resumeReading()">▶️ Continue</button>
+                <div class="pdf-controls">
+                    <button id="prevPageBtn" class="btn btn-secondary">◀ Previous</button>
+                    <div class="pdf-page-info">
+                        <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
+                    </div>
+                    <button id="nextPageBtn" class="btn btn-secondary">Next ▶</button>
+                    <div class="pdf-zoom-controls">
+                        <button id="zoomOutBtn" class="btn btn-secondary" title="Zoom Out">🔍−</button>
+                        <span id="zoomLevel" class="zoom-level">125%</span>
+                        <button id="zoomInBtn" class="btn btn-secondary" title="Zoom In">🔍+</button>
+                        <button id="resetZoomBtn" class="btn btn-secondary" title="Reset Zoom">⟲</button>
+                    </div>
                 </div>
+            </div>
+        </div>
 
-                <!-- Reading Status -->
+        <!-- Resizer 1: Sources | Chat -->
+        <div id="resizer1" class="panel-resizer resizer-notebooklm" title="Drag to resize"></div>
+
+        <!-- Panel 2: Chat -->
+        <div id="chatPanel" class="panel panel-chat">
+            <div id="chatSection" class="chat-container">
+                <div class="chat-header">
+                    <div>
+                        <h2>Chat</h2>
+                        <p>Ask me anything about the paper</p>
+                    </div>
+                    <button class="home-btn chat-end-session" onclick="goHome()">🏠 End Session</button>
+                </div>
                 <div id="readingStatus" class="reading-status hidden">
                     📖 Reading: <span id="currentSentencePreview"></span>
                 </div>
-
-                <!-- Podcast Player (shown when podcast is ready) -->
-                <div id="podcastPlayer" class="podcast-player hidden">
-                    <h4 class="podcast-player-title">🎙️ Paper Podcast</h4>
-                    <audio id="podcastAudio" controls class="podcast-audio"></audio>
-                    <div class="podcast-actions">
-                        <a id="podcastDownload" class="action-btn" download="papermind-podcast.mp3">⬇️ Download</a>
-                    </div>
-                    <details class="podcast-transcript">
-                        <summary>📜 Transcript</summary>
-                        <pre id="podcastTranscript" class="podcast-transcript-text"></pre>
-                    </details>
-                </div>
-
-                <!-- Chat Messages -->
                 <div id="chatMessages" class="chat-messages">
                     <div class="chat-empty-state">
                         <div class="icon">💬</div>
                         <h3>Start a conversation</h3>
-                        <p>Click "Start Reading" to begin, or ask me any question about the paper!</p>
+                        <p>Upload a PDF in Sources, then click "Start Reading" or ask a question!</p>
                     </div>
                 </div>
-
-                <!-- Chat Input -->
                 <div class="chat-input-area">
-                    <!-- Response Type Selector -->
                     <div class="response-type-selector">
-                        <div class="response-type-chip active" data-type="text" onclick="toggleResponseType('text')">
-                            📝 Text
-                        </div>
-                        <div class="response-type-chip active" data-type="voice" onclick="toggleResponseType('voice')">
-                            🔊 Voice
-                        </div>
-                        <div class="response-type-chip" data-type="image" onclick="toggleResponseType('image')">
-                            🖼️ Image
-                        </div>
-                        <div class="response-type-chip" data-type="video" onclick="toggleResponseType('video')">
-                            🎥 Video
-                        </div>
+                        <div class="response-type-chip active" data-type="text" onclick="toggleResponseType('text')">📝 Text</div>
+                        <div class="response-type-chip active" data-type="voice" onclick="toggleResponseType('voice')">🔊 Voice</div>
+                        <div class="response-type-chip" data-type="image" onclick="toggleResponseType('image')">🖼️ Image</div>
+                        <div class="response-type-chip" data-type="video" onclick="toggleResponseType('video')">🎥 Video</div>
                     </div>
-
-                    <!-- Input Area -->
                     <div class="chat-input-wrapper">
                         <textarea id="chatInput" class="chat-input" placeholder="Ask a question about the paper..." rows="1"></textarea>
                         <div class="chat-input-buttons">
@@ -139,8 +99,6 @@
                             <button id="sendBtn" class="send-btn">Send</button>
                         </div>
                     </div>
-
-                    <!-- Progress Stats -->
                     <div class="stats">
                         <div class="stat-item">
                             <div id="statPosition" class="stat-value">0</div>
@@ -155,6 +113,49 @@
                             <div class="stat-label">Progress</div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Resizer 2: Chat | Studio -->
+        <div id="resizer2" class="panel-resizer resizer-notebooklm" title="Drag to resize"></div>
+
+        <!-- Panel 3: Studio -->
+        <div id="studioPanel" class="panel panel-studio">
+            <div class="studio-header">
+                <h2>Studio</h2>
+            </div>
+            <div class="studio-actions">
+                <button id="exportPodcastBtn" class="studio-action-btn" onclick="exportAudioOverview()" title="Generate audio overview">
+                    <span class="studio-action-icon">🎙️</span>
+                    <span>Audio Overview</span>
+                </button>
+                <button id="exportVideoBtn" class="studio-action-btn" onclick="exportVideoOverview()" title="Generate video overview">
+                    <span class="studio-action-icon">🎬</span>
+                    <span>Video Overview</span>
+                </button>
+            </div>
+            <div class="studio-output">
+                <div id="podcastPlayer" class="podcast-player hidden">
+                    <h4 class="podcast-player-title">🎙️ Audio Overview</h4>
+                    <audio id="podcastAudio" controls class="podcast-audio"></audio>
+                    <div class="podcast-actions">
+                        <a id="podcastDownload" class="action-btn" download="papermind-audio-overview.mp3">⬇️ Download</a>
+                    </div>
+                    <details class="podcast-transcript">
+                        <summary>📜 Transcript</summary>
+                        <pre id="podcastTranscript" class="podcast-transcript-text"></pre>
+                    </details>
+                </div>
+                <div id="videoOverviewPlayer" class="podcast-player hidden">
+                    <h4 class="podcast-player-title">🎬 Video Overview</h4>
+                    <video id="videoOverviewVideo" class="video-overview-player" controls></video>
+                    <div class="podcast-actions">
+                        <a id="videoOverviewDownload" class="action-btn" download="papermind-video-overview.mp4">⬇️ Download</a>
+                    </div>
+                </div>
+                <div id="studioEmptyState" class="studio-empty-state">
+                    <p>Generate an Audio or Video overview from your paper.</p>
                 </div>
             </div>
         </div>

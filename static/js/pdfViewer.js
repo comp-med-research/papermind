@@ -193,7 +193,7 @@ export function resetZoom() {
         return;
     }
     
-    state.scale = 1.5; // Default zoom
+    state.scale = 1.25; // Default zoom
     updateZoom();
 }
 

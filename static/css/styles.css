@@ -20,6 +20,95 @@ body {
     --left-panel-size: 55%;
 }
 
+/* Three-panel layout (NotebookLM style) */
+.main-layout-three-panel {
+    --sources-size: 28%;
+    --chat-size: 44%;
+    --studio-size: 28%;
+    max-width: none;
+    width: 100%;
+}
+
+.main-layout-three-panel .panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.main-layout-three-panel .panel-sources {
+    flex: 0 1 var(--sources-size);
+    min-width: 240px;
+    max-width: 45%;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+.main-layout-three-panel .panel-chat {
+    flex: 0 1 var(--chat-size);
+    min-width: 320px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+.main-layout-three-panel .panel-studio {
+    flex: 0 1 var(--studio-size);
+    min-width: 260px;
+    max-width: 40%;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+.main-layout-three-panel .sources-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.main-layout-three-panel .pdf-viewer-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* NotebookLM-style resizer: subtle thin divider */
+.resizer-notebooklm {
+    flex: 0 0 1px;
+    min-width: 1px;
+    width: 1px;
+    background: #e2e8f0;
+    cursor: col-resize;
+    position: relative;
+    z-index: 10;
+    transition: background 0.15s;
+}
+
+.resizer-notebooklm:hover,
+.resizer-notebooklm.resizing {
+    background: #94a3b8;
+}
+
+.resizer-notebooklm::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    top: 0;
+    bottom: 0;
+    cursor: col-resize;
+}
+
+.resizer-notebooklm::after {
+    display: none;
+}
+
 .panel-left {
     flex: 0 1 var(--left-panel-size);
     min-width: 280px;
@@ -33,17 +122,26 @@ body {
 .panel-resizer {
     flex: 0 0 14px;
     min-width: 14px;
-    background: #c7d2fe;
-    border-left: 1px solid #818cf8;
-    border-right: 1px solid #818cf8;
+    background: #e2e8f0;
     cursor: col-resize;
     position: relative;
     z-index: 10;
 }
 
+.main-layout-three-panel .panel-resizer {
+    flex: 0 0 1px;
+    min-width: 1px;
+    background: #e2e8f0;
+}
+
+.main-layout-three-panel .panel-resizer:hover,
+.main-layout-three-panel .panel-resizer.resizing {
+    background: #94a3b8;
+}
+
 .panel-resizer:hover,
 .panel-resizer.resizing {
-    background: #a5b4fc;
+    background: #94a3b8;
 }
 
 .panel-resizer::before {
@@ -58,6 +156,10 @@ body {
     border-radius: 2px;
     box-shadow: -6px 0 0 #667eea, 6px 0 0 #667eea;
     pointer-events: none;
+}
+
+.main-layout-three-panel .panel-resizer::before {
+    display: none;
 }
 
 /* PDF Viewer Styles */
@@ -647,9 +749,14 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
     margin-bottom: 20px;
     padding-bottom: 15px;
     border-bottom: 2px solid #f0f4ff;
+}
+
+.play-pause-btn {
+    flex-shrink: 0;
 }
 
 .session-info {

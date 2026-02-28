@@ -1,5 +1,5 @@
-// Configuration
-export const API_URL = 'http://127.0.0.1:8000';
+// Configuration - use same origin when page is from backend to avoid localhost vs 127.0.0.1 CORS
+export const API_URL = (typeof window !== 'undefined' && window.location.port === '8000') ? window.location.origin : 'http://127.0.0.1:8000';
 
 // Global state
 export const state = {
@@ -10,7 +10,7 @@ export const state = {
     pageNum: 1,
     pageRendering: false,
     pageNumPending: null,
-    scale: 1.5,
+    scale: 1.25,
     totalSentences: 0,
     mediaRecorder: null,
     audioChunks: [],

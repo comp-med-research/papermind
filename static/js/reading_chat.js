@@ -3,6 +3,30 @@ import { showReadingIndicator, hideReadingIndicator, updatePDFPosition } from '.
 import { highlightSentence, clearHighlights } from './textHighlight.js';
 import { addMessage, addSystemMessage, updateReadingStatus } from './chat.js';
 
+export function updatePlayPauseButton() {
+    const btn = document.getElementById('playPauseBtn');
+    if (!btn) return;
+    if (state.isReading) {
+        btn.textContent = '⏸️ Pause';
+        btn.title = 'Pause reading';
+    } else {
+        btn.textContent = state.currentSentence ? '▶️ Continue' : '▶️ Start Reading';
+        btn.title = state.currentSentence ? 'Resume reading' : 'Start reading';
+    }
+}
+
+export function togglePlayPause() {
+    if (state.isReading) {
+        pauseReading();
+    } else {
+        if (state.currentSentence) {
+            resumeReading();
+        } else {
+            startReading();
+        }
+    }
+}
+
 export async function startReading() {
     try {
         const response = await fetch(`${API_URL}/start?session_id=${state.sessionId}`, {
@@ -16,6 +40,8 @@ export async function startReading() {
             hideReadingIndicator();
             clearHighlights();
             updateReadingStatus(null);
+            state.currentSentence = null;
+            updatePlayPauseButton();
             return;
         }
 
@@ -44,8 +70,7 @@ export async function startReading() {
         }
 
         // Update UI
-        document.getElementById('startBtn').classList.add('hidden');
-        document.getElementById('pauseBtn').classList.remove('hidden');
+        updatePlayPauseButton();
         state.isReading = true;
 
     } catch (error) {
@@ -57,8 +82,7 @@ export function pauseReading() {
     if (state.currentAudio) {
         state.currentAudio.pause();
     }
-    document.getElementById('pauseBtn').classList.add('hidden');
-    document.getElementById('resumeBtn').classList.remove('hidden');
+    updatePlayPauseButton();
     hideReadingIndicator();
     state.isReading = false;
     addSystemMessage('⏸️ Reading paused');
@@ -77,6 +101,8 @@ export async function resumeReading() {
             hideReadingIndicator();
             clearHighlights();
             updateReadingStatus(null);
+            state.currentSentence = null;
+            updatePlayPauseButton();
             return;
         }
 
@@ -98,8 +124,7 @@ export async function resumeReading() {
             playAudio(data.audio_b64, data.sentence);
         }
 
-        document.getElementById('resumeBtn').classList.add('hidden');
-        document.getElementById('pauseBtn').classList.remove('hidden');
+        updatePlayPauseButton();
         state.isReading = true;
 
         addSystemMessage('▶️ Reading resumed');

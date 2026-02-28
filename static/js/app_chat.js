@@ -1,18 +1,17 @@
 // Import all modules
 import { state } from './config.js';
 import { loadPDF, previousPage, nextPage, zoomIn, zoomOut, resetZoom } from './pdfViewer.js';
-import { startReading, pauseReading, resumeReading } from './reading_chat.js';
-import { uploadPDF, goHome, exportPodcast } from './session_chat.js';
+import { startReading, pauseReading, resumeReading, togglePlayPause } from './reading_chat.js';
+import { uploadPDF, goHome, exportAudioOverview, exportVideoOverview } from './session_chat.js';
 import { sendMessage, handleVoiceInput, initChatInput } from './questions_chat.js';
 import { toggleResponseType, clearChat } from './chat.js';
 import { initSelectionContextMenu } from './selectionContextMenu.js';
 
 // Expose functions globally for HTML onclick handlers
-window.startReading = startReading;
-window.pauseReading = pauseReading;
-window.resumeReading = resumeReading;
+window.togglePlayPause = togglePlayPause;
 window.goHome = goHome;
-window.exportPodcast = exportPodcast;
+window.exportAudioOverview = exportAudioOverview;
+window.exportVideoOverview = exportVideoOverview;
 window.toggleResponseType = toggleResponseType;
 
 // Initialize when DOM is loaded
@@ -29,62 +28,121 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initializePanelResizer() {
-    const resizer = document.getElementById('panelResizer');
     const mainLayout = document.getElementById('mainLayout');
-    if (!resizer || !mainLayout) return;
+    const resizer1 = document.getElementById('resizer1');
+    const resizer2 = document.getElementById('resizer2');
+    if (!mainLayout || !resizer1 || !resizer2) return;
 
-    resizer.addEventListener('mousedown', (e) => {
+    function getSourcesPct() {
+        const v = getComputedStyle(mainLayout).getPropertyValue('--sources-size').trim();
+        return parseFloat(v) || 28;
+    }
+    function getStudioPct() {
+        const v = getComputedStyle(mainLayout).getPropertyValue('--studio-size').trim();
+        return parseFloat(v) || 28;
+    }
+    function updateChatSize() {
+        const chat = Math.max(20, 100 - getSourcesPct() - getStudioPct());
+        mainLayout.style.setProperty('--chat-size', chat + '%');
+    }
+
+    resizer1.addEventListener('mousedown', (e) => {
         e.preventDefault();
-        resizer.classList.add('resizing');
+        resizer1.classList.add('resizing');
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
-
         function onMove(e) {
             const rect = mainLayout.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const pct = Math.min(Math.max((x / rect.width) * 100, 20), 80);
-            mainLayout.style.setProperty('--left-panel-size', pct + '%');
+            const x = (e.clientX - rect.left) / rect.width * 100;
+            const pct = Math.min(Math.max(x, 18), 55);
+            mainLayout.style.setProperty('--sources-size', pct + '%');
+            updateChatSize();
         }
-
         function onUp() {
-            resizer.classList.remove('resizing');
+            resizer1.classList.remove('resizing');
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
         }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
 
+    resizer2.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        resizer2.classList.add('resizing');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        function onMove(e) {
+            const rect = mainLayout.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / rect.width * 100;
+            const studioPct = Math.min(Math.max(100 - x, 18), 55);
+            mainLayout.style.setProperty('--studio-size', studioPct + '%');
+            updateChatSize();
+        }
+        function onUp() {
+            resizer2.classList.remove('resizing');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
     });
 }
 
+async function handleFileSelect(file) {
+    const fileInput = document.getElementById('fileInput');
+    if (!file || file.type !== 'application/pdf') {
+        if (file) alert('Please select a PDF file');
+        return;
+    }
+    try {
+        await uploadPDF(file);
+        await loadPDF(file);
+        document.getElementById('uploadSection').classList.add('hidden');
+        document.getElementById('pdfViewerContainer').classList.remove('hidden');
+        console.log('✅ PDF loaded successfully');
+    } catch (error) {
+        console.error('Error loading PDF:', error);
+        alert('Error loading PDF: ' + error.message);
+    } finally {
+        if (fileInput) fileInput.value = '';
+    }
+}
+
 function initializeUploadHandlers() {
     const fileInput = document.getElementById('fileInput');
+    const dropZone = document.querySelector('.upload-section');
     
     if (fileInput) {
         fileInput.addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (file && file.type === 'application/pdf') {
-                try {
-                    // Upload to backend
-                    await uploadPDF(file);
-                    
-                    // Load PDF in viewer
-                    await loadPDF(file);
-                    
-                    // Switch to chat view
-                    document.getElementById('uploadSection').classList.add('hidden');
-                    document.getElementById('chatSection').classList.remove('hidden');
-                    document.getElementById('pdfViewerContainer').classList.remove('hidden');
-                    document.getElementById('panelResizer').classList.remove('hidden');
-                    
-                    console.log('✅ PDF loaded successfully');
-                } catch (error) {
-                    console.error('Error loading PDF:', error);
-                    alert('Error loading PDF: ' + error.message);
-                }
-            }
+            const file = e.target?.files?.[0];
+            console.log('📄 File selected:', file?.name, file?.type);
+            await handleFileSelect(file);
+        });
+    } else {
+        console.error('❌ fileInput not found');
+    }
+
+    if (dropZone) {
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer?.files[0];
+            await handleFileSelect(file);
         });
     }
 
@@ -130,10 +188,8 @@ function initializeKeyboardShortcuts() {
         // Space to pause/resume reading
         if (e.code === 'Space' && !e.target.matches('input, textarea')) {
             e.preventDefault();
-            if (state.isReading) {
-                pauseReading();
-            } else if (state.sessionId) {
-                resumeReading();
+            if (state.sessionId) {
+                togglePlayPause();
             }
         }
         
