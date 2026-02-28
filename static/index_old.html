@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PaperMind - AI Reading Assistant for ADHD</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .main-layout {
+            display: flex;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+            height: calc(100vh - 40px);
+        }
+
+        .pdf-viewer-container {
+            flex: 1;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .pdf-viewer-container.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .pdf-canvas-wrapper {
+            flex: 1;
+            overflow: auto;
+            background: #f5f5f5;
+            border-radius: 10px;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 20px;
+        }
+
+        .pdf-display {
+            position: relative;
+            display: inline-block;
+        }
+
+        #pdfCanvas {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .reading-indicator {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(102, 126, 234, 0.95);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        .pdf-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px solid #f0f4ff;
+        }
+
+        .pdf-page-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #666;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        .container.sidebar {
+            max-width: 600px;
+            height: 100%;
+            overflow-y: auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .upload-section {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-section:hover {
+            background: #f8f9ff;
+            border-color: #764ba2;
+        }
+
+        .upload-section.dragover {
+            background: #f0f4ff;
+            border-color: #764ba2;
+            transform: scale(1.02);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .upload-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin-top: 20px;
+        }
+
+        .upload-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .upload-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .reading-section {
+            display: none;
+        }
+
+        .reading-section.active {
+            display: block;
+        }
+
+        .sentence-display {
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 20px;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sentence-text {
+            font-size: 1.3em;
+            line-height: 1.6;
+            color: #333;
+            text-align: center;
+        }
+
+        .text-highlight {
+            position: absolute;
+            background: rgba(255, 235, 59, 0.4);
+            pointer-events: none;
+            transition: all 0.3s ease;
+            border-radius: 3px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 50px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #f0f4ff;
+            color: #667eea;
+        }
+
+        .btn-danger {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .question-section {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .question-section.active {
+            display: block;
+        }
+
+        .question-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            font-size: 1em;
+            margin-bottom: 15px;
+            font-family: inherit;
+        }
+
+        .answer-display {
+            background: #f0f4ff;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .answer-display h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .answer-text {
+            color: #333;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .visual-image {
+            max-width: 100%;
+            border-radius: 10px;
+            margin-top: 15px;
+        }
+
+        .progress-bar {
+            background: #f0f4ff;
+            border-radius: 50px;
+            height: 10px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9ff;
+            border-radius: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .loading {
+            text-align: center;
+            color: #667eea;
+            margin: 20px 0;
+        }
+
+        .spinner {
+            border: 3px solid #f0f4ff;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .flag-message {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            color: #856404;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-layout">
+        <!-- PDF Viewer -->
+        <div id="pdfViewerContainer" class="pdf-viewer-container">
+            <h2 style="color: #667eea; margin-bottom: 15px;">📄 Document</h2>
+            <div class="pdf-canvas-wrapper">
+                <div class="pdf-display">
+                    <div id="readingIndicator" class="reading-indicator hidden">
+                        🎯 Reading this section...
+                    </div>
+                    <canvas id="pdfCanvas"></canvas>
+                </div>
+            </div>
+            <div class="pdf-controls">
+                <button class="btn btn-secondary" onclick="previousPage()">◀ Previous</button>
+                <div class="pdf-page-info">
+                    <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
+                </div>
+                <button class="btn btn-secondary" onclick="nextPage()">Next ▶</button>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="container sidebar">
+        <div class="header">
+            <h1>📚 PaperMind</h1>
+            <p>AI-Powered Reading Assistant for ADHD</p>
+        </div>
+
+        <!-- Upload Section -->
+        <div id="uploadSection" class="upload-section">
+            <h2>📄 Upload Your PDF</h2>
+            <p style="margin: 20px 0; color: #666;">Drag and drop your research paper here, or click to browse</p>
+            <input type="file" id="fileInput" accept=".pdf">
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose PDF File
+            </button>
+            <div id="uploadStatus" class="loading hidden">
+                <div class="spinner"></div>
+                <p>Processing your PDF...</p>
+            </div>
+        </div>
+
+        <!-- Reading Section -->
+        <div id="readingSection" class="reading-section">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+
+            <div id="flagMessage" class="flag-message hidden"></div>
+
+            <div class="sentence-display">
+                <p id="sentenceText" class="sentence-text">Click "Start Reading" to begin...</p>
+            </div>
+
+            <div class="controls">
+                <button id="startBtn" class="btn btn-primary" onclick="startReading()">▶️ Start Reading</button>
+                <button id="pauseBtn" class="btn btn-secondary hidden" onclick="pauseReading()">⏸️ Pause</button>
+                <button id="interruptBtn" class="btn btn-secondary" onclick="showQuestionInput()">❓ Ask Question</button>
+                <button id="resumeBtn" class="btn btn-primary hidden" onclick="resumeReading()">▶️ Continue</button>
+            </div>
+
+            <!-- Question Section -->
+            <div id="questionSection" class="question-section">
+                <input type="text" id="questionInput" class="question-input" placeholder="Type your question here...">
+                <div class="controls">
+                    <button class="btn btn-primary" onclick="submitQuestion()">Submit Question</button>
+                    <button class="btn btn-secondary" onclick="hideQuestionInput()">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Answer Display -->
+            <div id="answerDisplay" class="answer-display hidden">
+                <h3>💡 Answer</h3>
+                <p id="answerText" class="answer-text"></p>
+                <img id="visualImage" class="visual-image hidden" alt="Visual explanation">
+            </div>
+
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat-item">
+                    <div id="statPosition" class="stat-value">0</div>
+                    <div class="stat-label">Sentences Read</div>
+                </div>
+                <div class="stat-item">
+                    <div id="statQuestions" class="stat-value">0</div>
+                    <div class="stat-label">Questions Asked</div>
+                </div>
+                <div class="stat-item">
+                    <div id="statProgress" class="stat-value">0%</div>
+                    <div class="stat-label">Progress</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        const API_URL = 'http://127.0.0.1:8000';
+        let sessionId = 'default';
+        let currentAudio = null;
+        let isReading = false;
+        
+        // PDF.js setup
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pageRendering = false;
+        let pageNumPending = null;
+        let scale = 1.5;
+        let pdfTextContent = [];
+        let allSentences = [];
+
+        // Drag and drop functionality
+        const uploadSection = document.getElementById('uploadSection');
+        
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type === 'application/pdf') {
+                uploadPDF(file);
+            } else {
+                alert('Please upload a PDF file');
+            }
+        });
+
+        // File input change
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                uploadPDF(file);
+            }
+        });
+
+        // PDF Rendering Functions
+        function renderPage(num) {
+            pageRendering = true;
+            pdfDoc.getPage(num).then(function(page) {
+                const canvas = document.getElementById('pdfCanvas');
+                const ctx = canvas.getContext('2d');
+                const viewport = page.getViewport({scale: scale});
+
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: viewport
+                };
+
+                const renderTask = page.render(renderContext);
+                renderTask.promise.then(function() {
+                    pageRendering = false;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            });
+
+            document.getElementById('pageNum').textContent = num;
+        }
+
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        function previousPage() {
+            if (pageNum <= 1) {
+                return;
+            }
+            pageNum--;
+            queueRenderPage(pageNum);
+        }
+
+        function nextPage() {
+            if (pageNum >= pdfDoc.numPages) {
+                return;
+            }
+            pageNum++;
+            queueRenderPage(pageNum);
+        }
+
+        async function loadPDF(file) {
+            const fileReader = new FileReader();
+            
+            return new Promise((resolve, reject) => {
+                fileReader.onload = async function() {
+                    const typedarray = new Uint8Array(this.result);
+                    
+                    try {
+                        pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+                        document.getElementById('pageCount').textContent = pdfDoc.numPages;
+                        
+                        // Render first page
+                        renderPage(pageNum);
+                        
+                        // Show PDF viewer
+                        document.getElementById('pdfViewerContainer').classList.add('active');
+                        
+                        resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                
+                fileReader.onerror = reject;
+                fileReader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function uploadPDF(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('session_id', sessionId);
+
+            document.getElementById('uploadStatus').classList.remove('hidden');
+
+            try {
+                // Load PDF for viewing
+                await loadPDF(file);
+                
+                // Upload to backend
+                const response = await fetch(`${API_URL}/upload?session_id=${sessionId}`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Store total sentences for progress calculation
+                    window.totalSentences = data.sentence_count;
+                    
+                    document.getElementById('uploadSection').style.display = 'none';
+                    document.getElementById('readingSection').classList.add('active');
+                } else {
+                    alert('Error uploading PDF: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error uploading PDF: ' + error.message);
+            } finally {
+                document.getElementById('uploadStatus').classList.add('hidden');
+            }
+        }
+
+        async function startReading() {
+            try {
+                const response = await fetch(`${API_URL}/start?session_id=${sessionId}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.done) {
+                    document.getElementById('sentenceText').textContent = '🎉 Paper complete!';
+                    document.getElementById('readingIndicator').classList.add('hidden');
+                    return;
+                }
+
+                if (data.proactive_flag) {
+                    document.getElementById('flagMessage').textContent = data.flag_message;
+                    document.getElementById('flagMessage').classList.remove('hidden');
+                } else {
+                    document.getElementById('flagMessage').classList.add('hidden');
+                }
+
+                document.getElementById('sentenceText').textContent = data.sentence;
+                updateProgress(data.position);
+
+                // Show reading indicator on PDF
+                document.getElementById('readingIndicator').classList.remove('hidden');
+
+                // Play audio
+                if (data.audio_b64) {
+                    playAudio(data.audio_b64);
+                }
+
+                // Update UI
+                document.getElementById('startBtn').classList.add('hidden');
+                document.getElementById('pauseBtn').classList.remove('hidden');
+                isReading = true;
+
+            } catch (error) {
+                alert('Error starting reading: ' + error.message);
+            }
+        }
+
+        function pauseReading() {
+            if (currentAudio) {
+                currentAudio.pause();
+            }
+            document.getElementById('pauseBtn').classList.add('hidden');
+            document.getElementById('resumeBtn').classList.remove('hidden');
+            document.getElementById('readingIndicator').classList.add('hidden');
+            isReading = false;
+        }
+
+        async function resumeReading() {
+            try {
+                const response = await fetch(`${API_URL}/resume?session_id=${sessionId}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.done) {
+                    document.getElementById('sentenceText').textContent = '🎉 Paper complete!';
+                    document.getElementById('readingIndicator').classList.add('hidden');
+                    return;
+                }
+
+                document.getElementById('sentenceText').textContent = data.sentence;
+                updateProgress(data.position);
+
+                // Show reading indicator
+                document.getElementById('readingIndicator').classList.remove('hidden');
+
+                if (data.audio_b64) {
+                    playAudio(data.audio_b64);
+                }
+
+                document.getElementById('resumeBtn').classList.add('hidden');
+                document.getElementById('pauseBtn').classList.remove('hidden');
+                document.getElementById('answerDisplay').classList.add('hidden');
+                isReading = true;
+
+            } catch (error) {
+                alert('Error resuming reading: ' + error.message);
+            }
+        }
+
+        function showQuestionInput() {
+            pauseReading();
+            document.getElementById('questionSection').classList.add('active');
+        }
+
+        function hideQuestionInput() {
+            document.getElementById('questionSection').classList.remove('active');
+            document.getElementById('questionInput').value = '';
+        }
+
+        async function submitQuestion() {
+            const question = document.getElementById('questionInput').value.trim();
+            
+            if (!question) {
+                alert('Please enter a question');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/interrupt`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        question: question,
+                        session_id: sessionId
+                    })
+                });
+
+                const data = await response.json();
+
+                // Display answer
+                document.getElementById('answerText').textContent = data.answer;
+                document.getElementById('answerDisplay').classList.remove('hidden');
+
+                // Display visual if available
+                if (data.image_url) {
+                    document.getElementById('visualImage').src = data.image_url;
+                    document.getElementById('visualImage').classList.remove('hidden');
+                } else {
+                    document.getElementById('visualImage').classList.add('hidden');
+                }
+
+                // Play answer audio
+                if (data.audio_b64) {
+                    playAudio(data.audio_b64);
+                }
+
+                // Update stats
+                if (data.summary) {
+                    updateStats(data.summary);
+                }
+
+                hideQuestionInput();
+
+            } catch (error) {
+                alert('Error submitting question: ' + error.message);
+            }
+        }
+
+        function playAudio(hexString) {
+            // Convert hex string to audio
+            const bytes = new Uint8Array(hexString.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+
+            if (currentAudio) {
+                currentAudio.pause();
+            }
+
+            currentAudio = new Audio(url);
+            currentAudio.play();
+
+            // Auto-advance to next sentence when audio finishes
+            currentAudio.onended = () => {
+                if (isReading) {
+                    setTimeout(() => startReading(), 1000);
+                }
+            };
+        }
+
+        function updateProgress(position) {
+            document.getElementById('statPosition').textContent = position;
+            
+            // Auto-scroll PDF to approximate position
+            if (pdfDoc && pdfDoc.numPages > 1 && window.totalSentences) {
+                const progressPercent = position / window.totalSentences;
+                
+                // Calculate which page we should be on
+                const estimatedPage = Math.max(1, Math.ceil(progressPercent * pdfDoc.numPages));
+                
+                // Only change page if we're significantly off
+                if (Math.abs(estimatedPage - pageNum) > 1) {
+                    pageNum = Math.max(1, Math.min(estimatedPage, pdfDoc.numPages));
+                    queueRenderPage(pageNum);
+                }
+            }
+        }
+
+        function updateStats(summary) {
+            document.getElementById('statQuestions').textContent = summary.questions_asked || 0;
+            document.getElementById('statProgress').textContent = summary.percent + '%';
+            document.getElementById('progressFill').style.width = summary.percent + '%';
+            
+            // Store progress info for page calculation
+            if (summary.progress) {
+                const parts = summary.progress.split('/');
+                if (parts.length === 2) {
+                    window.totalSentences = parseInt(parts[1]);
+                }
+            }
+        }
+
+        // Load session summary on page load
+        async function loadSummary() {
+            try {
+                const response = await fetch(`${API_URL}/summary/${sessionId}`);
+                const data = await response.json();
+                if (!data.error) {
+                    updateStats(data);
+                }
+            } catch (error) {
+                console.log('No existing session');
+            }
+        }
+    </script>
+</body>
+</html>

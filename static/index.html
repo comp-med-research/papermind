@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PaperMind - AI Reading Assistant for ADHD</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="main-layout">
+        <!-- PDF Viewer -->
+        <div id="pdfViewerContainer" class="pdf-viewer-container">
+            <div class="session-controls">
+                <h2 style="color: #667eea; margin: 0;">📄 Document</h2>
+                <button class="home-btn" onclick="goHome()">🏠 Home</button>
+            </div>
+            <div class="pdf-canvas-wrapper">
+                <div class="pdf-display">
+                    <div id="readingIndicator" class="reading-indicator hidden">
+                        🎯 Reading this section...
+                    </div>
+                    <canvas id="pdfCanvas"></canvas>
+                </div>
+            </div>
+            <div class="pdf-controls">
+                <button class="btn btn-secondary" onclick="previousPage()">◀ Previous</button>
+                <div class="pdf-page-info">
+                    <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
+                </div>
+                <button class="btn btn-secondary" onclick="nextPage()">Next ▶</button>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="container sidebar">
+            <div class="header">
+                <h1>📚 PaperMind</h1>
+                <p>AI-Powered Reading Assistant for ADHD</p>
+            </div>
+
+            <!-- Upload Section -->
+            <div id="uploadSection" class="upload-section">
+                <h2>📄 Upload Your PDF</h2>
+                <p style="margin: 20px 0; color: #666;">Drag and drop your research paper here, or click to browse</p>
+                <input type="file" id="fileInput" accept=".pdf">
+                <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                    Choose PDF File
+                </button>
+                <div id="uploadStatus" class="loading hidden">
+                    <div class="spinner"></div>
+                    <p>Processing your PDF...</p>
+                </div>
+            </div>
+
+            <!-- Reading Section -->
+            <div id="readingSection" class="reading-section">
+                <div class="session-controls">
+                    <div class="session-info">Session active</div>
+                    <button class="home-btn" onclick="goHome()">🏠 End Session</button>
+                </div>
+
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+
+                <div id="flagMessage" class="flag-message hidden"></div>
+
+                <div class="sentence-display">
+                    <p id="sentenceText" class="sentence-text">Click "Start Reading" to begin...</p>
+                </div>
+
+                <div class="controls">
+                    <button id="startBtn" class="btn btn-primary" onclick="startReading()">▶️ Start Reading</button>
+                    <button id="pauseBtn" class="btn btn-secondary hidden" onclick="pauseReading()">⏸️ Pause</button>
+                    <button id="interruptBtn" class="btn btn-secondary" onclick="showQuestionInput()">❓ Ask Question</button>
+                    <button id="resumeBtn" class="btn btn-primary hidden" onclick="resumeReading()">▶️ Continue</button>
+                </div>
+
+                <!-- Question Section -->
+                <div id="questionSection" class="question-section">
+                    <h3 style="color: #667eea; margin-bottom: 15px;">Ask a Question</h3>
+                    
+                    <div class="question-input-wrapper">
+                        <input type="text" id="questionInput" class="question-input" placeholder="Type your question or use voice input...">
+                        <button id="voiceInputBtn" class="voice-input-btn" onclick="handleVoiceInput()" title="Voice input">🎤</button>
+                    </div>
+
+                    <div class="response-options">
+                        <h4>How would you like the answer?</h4>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="responseText" checked>
+                                <span>📝 Text</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="responseVoice" checked>
+                                <span>🔊 Voice</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="responseImage">
+                                <span>🖼️ Image</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="responseVideo">
+                                <span>🎥 Video</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="controls">
+                        <button class="btn btn-primary" onclick="submitQuestion()">Submit Question</button>
+                        <button class="btn btn-secondary" onclick="hideQuestionInput()">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Answer Display -->
+                <div id="answerDisplay" class="answer-display hidden">
+                    <h3>💡 Answer</h3>
+                    <p id="answerText" class="answer-text hidden"></p>
+                    <img id="visualImage" class="visual-image hidden" alt="Visual explanation">
+                    <video id="visualVideo" class="visual-video hidden" controls></video>
+                    
+                    <!-- Sources Section -->
+                    <div id="sourcesSection" class="sources-section hidden">
+                        <h4>📚 Sources from Document</h4>
+                        <div id="sourcesList" class="sources-list"></div>
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div class="stats">
+                    <div class="stat-item">
+                        <div id="statPosition" class="stat-value">0</div>
+                        <div class="stat-label">Sentences Read</div>
+                    </div>
+                    <div class="stat-item">
+                        <div id="statQuestions" class="stat-value">0</div>
+                        <div class="stat-label">Questions Asked</div>
+                    </div>
+                    <div class="stat-item">
+                        <div id="statProgress" class="stat-value">0%</div>
+                        <div class="stat-label">Progress</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
