@@ -13,26 +13,66 @@ body {
 
 .main-layout {
     display: flex;
-    gap: 20px;
+    gap: 0;
     max-width: 1600px;
     margin: 0 auto;
     height: calc(100vh - 40px);
+    --left-panel-size: 55%;
+}
+
+.panel-left {
+    flex: 0 1 var(--left-panel-size);
+    min-width: 280px;
+}
+
+.panel-right {
+    flex: 1 1 calc(100% - var(--left-panel-size));
+    min-width: 350px;
+}
+
+.panel-resizer {
+    flex: 0 0 14px;
+    min-width: 14px;
+    background: #c7d2fe;
+    border-left: 1px solid #818cf8;
+    border-right: 1px solid #818cf8;
+    cursor: col-resize;
+    position: relative;
+    z-index: 10;
+}
+
+.panel-resizer:hover,
+.panel-resizer.resizing {
+    background: #a5b4fc;
+}
+
+.panel-resizer::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 3px;
+    height: 28px;
+    background: #667eea;
+    border-radius: 2px;
+    box-shadow: -6px 0 0 #667eea, 6px 0 0 #667eea;
+    pointer-events: none;
 }
 
 /* PDF Viewer Styles */
 .pdf-viewer-container {
-    flex: 1;
     background: white;
     border-radius: 20px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     padding: 20px;
     overflow: hidden;
-    display: none;
-}
-
-.pdf-viewer-container.active {
     display: flex;
     flex-direction: column;
+}
+
+.pdf-viewer-container.hidden {
+    display: none;
 }
 
 .pdf-canvas-wrapper {
@@ -180,9 +220,10 @@ body {
 }
 
 .container.sidebar {
-    max-width: 600px;
     height: 100%;
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .header {

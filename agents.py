@@ -126,11 +126,17 @@ or
 # Handles interruptions and questions
 # ─────────────────────────────────────────────
 
-def conversation_agent(question: str, state: SessionState, full_text: str) -> dict:
+def conversation_agent(
+    question: str,
+    state: SessionState,
+    full_text: str,
+    rag_retriever=None,  # callable(question, top_k) -> list[(chunk_text, page_num)]
+) -> dict:
     """
     Answers the user's question using:
-    1. RAG over the document (surrounding context)
-    2. General knowledge from Nemotron
+    1. RAG (semantic retrieval) over the full document when available
+    2. Fallback to surrounding context if no RAG index
+    3. General knowledge from Nemotron
     Returns answer + a suggested visual prompt for Runware
     """
 
@@ -140,14 +146,30 @@ Rules:
 - Answer in plain, conversational English — no jargon unless you immediately explain it
 - Keep answers SHORT — 3 sentences maximum for simple concepts, 5 for complex ones
 - Always ground your answer in the document context provided
-- After your answer, cite the specific parts of the document you used by writing: SOURCES: [quote the exact relevant phrases from the document, separated by " | "]
 - End with: "Ready to continue?"
 - Finally, write: VISUAL: [a short description of a diagram that would help explain this concept visually, suitable for image generation]
 
 The user has ADHD. Clarity and brevity are kindness."""
 
-    # simple RAG: find the most relevant sentences from the document
-    context = state.surrounding_context(window=10)
+    # RAG: semantic retrieval over full document, or fallback to positional context
+    retrieved_chunks: list[tuple[str, int | None]] = []
+    if rag_retriever:
+        try:
+            retrieved = rag_retriever(question, top_k=5)
+            if retrieved:
+                retrieved_chunks = retrieved
+                context_parts = []
+                for chunk_text, page_num in retrieved:
+                    tag = f" [Page {page_num}]" if page_num else ""
+                    context_parts.append(f"{chunk_text}{tag}")
+                context = "\n\n---\n\n".join(context_parts)
+            else:
+                context = state.surrounding_context(window=10)
+        except Exception as e:
+            print(f"RAG retrieval failed: {e}")
+            context = state.surrounding_context(window=10)
+    else:
+        context = state.surrounding_context(window=10)
 
     # also include any previous questions for continuity
     history = ""
@@ -156,7 +178,7 @@ The user has ADHD. Clarity and brevity are kindness."""
         history = "\n".join([f"Q: {q['question']}\nA: {q['answer']}" for q in last])
 
     user_prompt = f"""
-The user is reading this paper. Here is the context around where they stopped:
+The user is reading this paper. Here is the most relevant context from the document for their question:
 
 DOCUMENT CONTEXT:
 {context}
@@ -170,7 +192,7 @@ Answer the question, grounded in the document. Then provide the VISUAL prompt.
 """
 
     response = nemotron.chat.completions.create(
-        model=os.getenv("NEMOTRON_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1"),
+        model=os.getenv("NEMOTRON_CONVERSATION_MODEL", os.getenv("NEMOTRON_MODEL", "nvidia/nemotron-3-nano")),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -181,29 +203,10 @@ Answer the question, grounded in the document. Then provide the VISUAL prompt.
 
     raw = response.choices[0].message.content.strip()
 
-    # Parse answer, sources, and visual prompt
+    # Parse answer and visual prompt (sources come from RAG retrieval, not the model)
     answer = raw
     visual_prompt = None
-    sources = []
-
-    # Extract sources
-    if "SOURCES:" in raw:
-        parts = raw.split("SOURCES:")
-        answer = parts[0].strip()
-        remainder = parts[1]
-        
-        # Check if there's a VISUAL after SOURCES
-        if "VISUAL:" in remainder:
-            source_parts = remainder.split("VISUAL:")
-            sources_text = source_parts[0].strip()
-            visual_prompt = source_parts[1].strip()
-        else:
-            sources_text = remainder.strip()
-        
-        # Parse sources (separated by |)
-        sources = [s.strip() for s in sources_text.split("|") if s.strip()]
-    elif "VISUAL:" in raw:
-        # No sources, but has visual
+    if "VISUAL:" in raw:
         parts = raw.split("VISUAL:")
         answer = parts[0].strip()
         visual_prompt = parts[1].strip()
@@ -213,7 +216,7 @@ Answer the question, grounded in the document. Then provide the VISUAL prompt.
         "question": question,
         "answer": answer,
         "position": state.position,
-        "sources": sources
+        "sources": [t for t, _ in retrieved_chunks],
     })
 
     # update knowledge gaps using Claude as the judge
@@ -224,7 +227,7 @@ Answer the question, grounded in the document. Then provide the VISUAL prompt.
     return {
         "answer": answer,
         "visual_prompt": visual_prompt,
-        "sources": sources,
+        "retrieved_chunks": retrieved_chunks,
         "reading_position": state.position  # so frontend knows exactly where to resume
     }
 
@@ -314,10 +317,15 @@ def handle_start(state: SessionState) -> dict:
     return reading_agent(state)
 
 
-def handle_interrupt(question: str, state: SessionState, full_text: str) -> dict:
+def handle_interrupt(
+    question: str,
+    state: SessionState,
+    full_text: str,
+    rag_retriever=None,
+) -> dict:
     """Call this when user hits the Interrupt button"""
     state.status = "INTERRUPTED"
-    result = conversation_agent(question, state, full_text)
+    result = conversation_agent(question, state, full_text, rag_retriever=rag_retriever)
     state.status = "ANSWERING"
     return result
 

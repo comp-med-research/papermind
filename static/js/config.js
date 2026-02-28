@@ -16,5 +16,6 @@ export const state = {
     audioChunks: [],
     currentSentence: null,
     pageTextContent: {},
-    currentHighlightedSpans: []
+    currentHighlightedSpans: [],
+    pendingHighlightAfterRender: null  // Text to highlight after next page render (for source citations)
 };

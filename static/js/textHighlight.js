@@ -103,105 +103,113 @@ function findSentenceFromText(clickedText) {
     return null;
 }
 
+function normalizeForMatch(text) {
+    return text
+        .replace(/\*+/g, '')
+        .replace(/^["']+|["']+$/g, '')
+        .replace(/\.{2,}$/g, '')
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
+        .trim();
+}
+
 export function highlightSentence(sentenceText) {
     console.log('Highlighting sentence:', sentenceText);
     
-    // Clear previous highlights
     clearHighlights();
-    
-    if (!sentenceText) {
-        console.log('No sentence text provided');
-        return;
-    }
+    if (!sentenceText) return;
     
     const textLayer = document.getElementById('textLayer');
-    if (!textLayer) {
-        console.error('Text layer not found!');
-        return;
+    if (!textLayer) return;
+    
+    const spans = Array.from(textLayer.querySelectorAll('span'));
+    if (spans.length === 0) return;
+    
+    const searchNormalized = normalizeForMatch(sentenceText);
+    
+    // Build normalized page text from spans + track char range per span
+    let normFullText = '';
+    const spanRanges = []; // { span, start, end } in normFullText
+    
+    for (const span of spans) {
+        const t = span.textContent.trim();
+        if (!t) continue;
+        
+        const start = normFullText.length;
+        const normPart = normalizeForMatch(t);
+        normFullText += (normFullText ? ' ' : '') + normPart;
+        spanRanges.push({ span, start, end: normFullText.length });
     }
     
-    const spans = textLayer.querySelectorAll('span');
-    console.log('Found', spans.length, 'spans in text layer');
-    
-    if (spans.length === 0) {
-        console.warn('No text spans found - text layer may not be rendered');
-        return;
+    // Find where search appears (try full, then first 60, then 40 chars - same as backend)
+    let matchStart = normFullText.indexOf(searchNormalized);
+    let matchLen = searchNormalized.length;
+    if (matchStart < 0 && searchNormalized.length > 40) {
+        matchStart = normFullText.indexOf(searchNormalized.substring(0, 60));
+        matchLen = 60;
+    }
+    if (matchStart < 0 && searchNormalized.length > 30) {
+        matchStart = normFullText.indexOf(searchNormalized.substring(0, 40));
+        matchLen = 40;
     }
     
-    // More precise matching: find consecutive spans that match the sentence
-    const sentenceClean = sentenceText.toLowerCase().trim();
-    const sentenceWords = sentenceClean.split(/\s+/);
     const highlightedSpans = [];
-    
-    // Build text from spans to find exact match
-    let currentText = '';
-    let matchingSpans = [];
-    
-    for (let i = 0; i < spans.length; i++) {
-        const span = spans[i];
-        const spanText = span.textContent.trim();
-        
-        if (!spanText) continue;
-        
-        // Add to current text
-        currentText += (currentText ? ' ' : '') + spanText;
-        matchingSpans.push(span);
-        
-        // Check if current text contains the sentence
-        const currentClean = currentText.toLowerCase().replace(/\s+/g, ' ').trim();
-        
-        // If we have a match, highlight these spans
-        if (currentClean.includes(sentenceClean) || sentenceClean.includes(currentClean)) {
-            // Found a match - highlight these spans
-            matchingSpans.forEach(s => {
-                s.classList.add('highlight');
-                highlightedSpans.push(s);
-            });
-            break;
-        }
-        
-        // If current text is getting too long and no match, reset
-        if (matchingSpans.length > sentenceWords.length * 2) {
-            // Remove oldest span and its text
-            const removed = matchingSpans.shift();
-            const removedText = removed.textContent.trim();
-            currentText = currentText.substring(removedText.length).trim();
-        }
-    }
-    
-    // Fallback: if no exact match, try word-based matching (more conservative)
-    if (highlightedSpans.length === 0) {
-        console.log('Exact match failed, trying word-based matching');
-        const firstWords = sentenceWords.slice(0, 3); // First 3 words
-        const lastWords = sentenceWords.slice(-3); // Last 3 words
-        
-        let foundStart = false;
-        let foundEnd = false;
-        
-        spans.forEach(span => {
-            const spanText = span.textContent.toLowerCase().trim();
-            
-            // Start highlighting when we find the first words
-            if (!foundStart && firstWords.some(word => spanText.includes(word))) {
-                foundStart = true;
-            }
-            
-            // Keep highlighting until we find the last words
-            if (foundStart && !foundEnd) {
+    if (matchStart >= 0) {
+        const matchEnd = matchStart + matchLen;
+        spanRanges.forEach(({ span, start, end }) => {
+            if (end > matchStart && start < matchEnd) {
                 span.classList.add('highlight');
                 highlightedSpans.push(span);
-                
-                if (lastWords.some(word => spanText.includes(word))) {
-                    foundEnd = true;
-                }
             }
         });
     }
     
-    console.log('Highlighted', highlightedSpans.length, 'spans');
-    state.currentHighlightedSpans = highlightedSpans;
+    // Fallback: sliding window - find minimal consecutive spans containing search
+    if (highlightedSpans.length === 0) {
+        for (let i = 0; i < spans.length; i++) {
+            let built = '';
+            for (let j = i; j < Math.min(i + 25, spans.length); j++) {
+                const t = spans[j].textContent.trim();
+                if (!t) continue;
+                built += (built ? ' ' : '') + t;
+                const currNorm = normalizeForMatch(built);
+                if (currNorm.includes(searchNormalized)) {
+                    for (let k = i; k <= j; k++) {
+                        const s = spans[k];
+                        if (s.textContent.trim()) {
+                            s.classList.add('highlight');
+                            highlightedSpans.push(s);
+                        }
+                    }
+                    break;
+                }
+            }
+            if (highlightedSpans.length > 0) break;
+        }
+    }
     
-    // Scroll to first highlighted span
+    // Last resort: highlight by first/last significant words
+    if (highlightedSpans.length === 0) {
+        const words = searchNormalized.split(/\s+/).filter(w => w.length > 2);
+        const firstWords = words.slice(0, 4);
+        const lastWords = words.slice(-2);
+        let inRange = false;
+        let count = 0;
+        const maxSpans = 20;
+        for (const span of spans) {
+            const t = span.textContent.toLowerCase().trim();
+            if (!t) continue;
+            if (!inRange && firstWords.some(w => t.includes(w))) inRange = true;
+            if (inRange && count < maxSpans) {
+                span.classList.add('highlight');
+                highlightedSpans.push(span);
+                count++;
+                if (lastWords.some(w => t.includes(w))) inRange = false;
+            }
+        }
+    }
+    
+    state.currentHighlightedSpans = highlightedSpans;
     if (highlightedSpans.length > 0) {
         highlightedSpans[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
     }

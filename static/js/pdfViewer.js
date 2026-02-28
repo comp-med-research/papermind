@@ -1,5 +1,5 @@
 import { state } from './config.js';
-import { renderTextLayer, clearHighlights } from './textHighlight.js';
+import { renderTextLayer, clearHighlights, highlightSentence } from './textHighlight.js';
 
 // PDF.js setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -28,14 +28,20 @@ export function renderPage(num) {
         try {
             await renderTextLayer(page, viewport);
             console.log('Text layer rendered successfully');
+            // Highlight source text only if no other page is queued (we're on the final target page)
+            if (state.pendingHighlightAfterRender && state.pageNumPending === null) {
+                highlightSentence(state.pendingHighlightAfterRender);
+                state.pendingHighlightAfterRender = null;
+            }
         } catch (error) {
             console.error('Failed to render text layer:', error);
         }
         
         state.pageRendering = false;
         if (state.pageNumPending !== null) {
-            renderPage(state.pageNumPending);
+            const nextPage = state.pageNumPending;
             state.pageNumPending = null;
+            renderPage(nextPage);
         }
     }).catch(error => {
         console.error('Error rendering page:', error);
@@ -131,16 +137,26 @@ export function hideReadingIndicator() {
     document.getElementById('readingIndicator').classList.add('hidden');
 }
 
-export function jumpToPage(pageNumber) {
-    if (state.pdfDoc && pageNumber >= 1 && pageNumber <= state.pdfDoc.numPages) {
-        state.pageNum = pageNumber;
-        queueRenderPage(pageNumber);
-        
-        // Scroll to top of PDF viewer
-        const pdfWrapper = document.querySelector('.pdf-canvas-wrapper');
-        if (pdfWrapper) {
-            pdfWrapper.scrollTop = 0;
-        }
+export function jumpToPage(pageNumber, textToHighlight = null) {
+    const num = parseInt(pageNumber, 10);
+    if (isNaN(num)) return;
+    
+    if (!state.pdfDoc) {
+        console.warn('jumpToPage: No PDF loaded');
+        return;
+    }
+    if (num < 1 || num > state.pdfDoc.numPages) {
+        console.warn('jumpToPage: Page', num, 'out of range (1-' + state.pdfDoc.numPages + ')');
+        return;
+    }
+    
+    state.pageNum = num;
+    state.pendingHighlightAfterRender = textToHighlight || null;
+    queueRenderPage(num);
+    
+    const pdfWrapper = document.querySelector('.pdf-canvas-wrapper');
+    if (pdfWrapper) {
+        pdfWrapper.scrollTop = 0;
     }
 }
 

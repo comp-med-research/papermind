@@ -1,16 +1,19 @@
 import os
 import io
+import re
 import uuid
 import requests
 import base64
 import fitz  # PyMuPDF
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from agents import SessionState, handle_start, handle_interrupt, handle_resume, get_session_summary
+from rag import DocumentRAG
+from podcast import generate_podcast_mp3
 
 load_dotenv()
 
@@ -32,6 +35,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 sessions: dict[str, SessionState] = {}
 full_texts: dict[str, str] = {}
 page_texts: dict[str, dict[int, str]] = {}  # session_id -> {page_num -> text}
+rag_indexes: dict[str, DocumentRAG] = {}  # session_id -> RAG index for semantic retrieval
 
 
 # ─────────────────────────────────────────────
@@ -79,33 +83,17 @@ def generate_image(prompt: str) -> str | None:
         return None
 
 
-def find_source_pages(sources: list[str], page_text_map: dict[int, str]) -> list[dict]:
-    """Find which page each source quote appears on"""
-    sources_with_pages = []
-    
-    for source in sources:
-        # Clean the source text for matching
-        source_clean = source.strip().lower()
-        found_page = None
-        
-        # Search through pages
-        for page_num, page_text in page_text_map.items():
-            page_text_clean = page_text.lower()
-            if source_clean in page_text_clean:
-                found_page = page_num
-                break
-        
-        sources_with_pages.append({
-            "text": source,
-            "page": found_page
-        })
-    
-    return sources_with_pages
+# ElevenLabs voice IDs: Rachel (female host), Adam (male guest)
+VOICE_RACHEL = "21m00Tcm4TlvDq8ikWAM"   # Calm, professional female
+VOICE_ADAM = "pNInz6obpgDQGcFmaJgB"     # Deep, authoritative male
 
 
-def text_to_speech(text: str) -> bytes:
-    """Convert text to audio using Runware (ElevenLabs)"""
+def text_to_speech(text: str, voice_id: str | None = None) -> bytes:
+    """Convert text to audio using Runware (ElevenLabs). Optional voice_id for different voices."""
     try:
+        speech = {"text": text}
+        if voice_id:
+            speech["voice"] = voice_id
         task_uuid = str(uuid.uuid4())
         response = requests.post(
             "https://api.runware.ai/v1",
@@ -114,9 +102,7 @@ def text_to_speech(text: str) -> bytes:
                 "taskType": "audioInference",
                 "taskUUID": task_uuid,
                 "model": "elevenlabs:24@1",  # Eleven Flash v2.5 - fast, natural speech
-                "speech": {
-                    "text": text
-                },
+                "speech": speech,
                 "outputType": "base64Data",
                 "outputFormat": "MP3",  # Must be uppercase
                 "numberResults": 1,
@@ -156,6 +142,15 @@ async def upload_pdf(file: UploadFile = File(...), session_id: str = "default"):
     sessions[session_id] = SessionState(sentences)
     full_texts[session_id] = full_text
     page_texts[session_id] = page_text_map
+
+    # Build RAG index for semantic retrieval
+    try:
+        rag = DocumentRAG()
+        rag.index(sentences, page_text_map)
+        rag_indexes[session_id] = rag
+    except Exception as e:
+        print(f"RAG index build failed (will use positional context): {e}")
+        rag_indexes[session_id] = None
 
     return {
         "success": True,
@@ -203,17 +198,26 @@ async def interrupt(req: InterruptRequest):
     if not state:
         return {"error": "No session found"}
 
-    result = handle_interrupt(req.question, state, full_text)
+    rag = rag_indexes.get(req.session_id)
+    rag_retriever = rag.retrieve if rag else None
 
-    # Find page numbers for sources
+    result = handle_interrupt(req.question, state, full_text, rag_retriever=rag_retriever)
+
+    # Sources come from RAG retrieval (chunk text + page) — no model prompting needed
     sources_with_pages = []
-    if result.get("sources"):
-        sources_with_pages = find_source_pages(result["sources"], page_text_map)
+    if result.get("retrieved_chunks"):
+        for chunk_text, page_num in result["retrieved_chunks"][:5]:
+            excerpt = (chunk_text[:150] + "…") if len(chunk_text) > 150 else chunk_text
+            sources_with_pages.append({"text": excerpt.strip(), "page": page_num})
+
+    embedding_backend = rag.get_embedding_backend() if rag and hasattr(rag, 'get_embedding_backend') else "none"
+    print(f"📚 RAG pathway: {embedding_backend}")
 
     response = {
         "resume_position": result["reading_position"],
         "summary": get_session_summary(state),
-        "sources": sources_with_pages  # Include sources with page numbers
+        "sources": sources_with_pages,
+        "embedding_backend": embedding_backend,
     }
 
     # Generate requested response types
@@ -234,6 +238,35 @@ async def interrupt(req: InterruptRequest):
         response["video_url"] = None
 
     return response
+
+
+class ExportPodcastRequest(BaseModel):
+    session_id: str = "default"
+    length: str = "medium"  # "short" or "medium"
+
+
+@app.post("/export-podcast")
+async def export_podcast(req: ExportPodcastRequest):
+    """Generate a podcast (MP3) from the uploaded paper. Can take 1–3 minutes."""
+    print("Podcast: Request received...")
+    full_text = full_texts.get(req.session_id, "")
+    if not full_text:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No document found. Upload a PDF first."},
+        )
+
+    try:
+        mp3_bytes, transcript = generate_podcast_mp3(
+            full_text, length=req.length, tts_func=text_to_speech
+        )
+        return {
+            "audio_base64": base64.b64encode(mp3_bytes).decode(),
+            "transcript": transcript,
+        }
+    except Exception as e:
+        print(f"Podcast export error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/resume")
@@ -269,8 +302,8 @@ async def get_summary(session_id: str = "default"):
 
 @app.get("/")
 async def root():
-    """Serve the frontend"""
-    return FileResponse("static/index.html")
+    """Serve the chat frontend"""
+    return FileResponse("static/index_chat.html")
 
 
 @app.get("/api")
