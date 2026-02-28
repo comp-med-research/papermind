@@ -114,7 +114,9 @@ def text_to_speech(text: str) -> bytes:
                 "taskType": "audioInference",
                 "taskUUID": task_uuid,
                 "model": "elevenlabs:24@1",  # Eleven Flash v2.5 - fast, natural speech
-                "speech": text,  # Use 'speech' parameter for TTS
+                "speech": {
+                    "text": text
+                },
                 "outputType": "base64Data",
                 "outputFormat": "MP3",  # Must be uppercase
                 "numberResults": 1,
