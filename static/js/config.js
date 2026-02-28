@@ -13,5 +13,8 @@ export const state = {
     scale: 1.5,
     totalSentences: 0,
     mediaRecorder: null,
-    audioChunks: []
+    audioChunks: [],
+    currentSentence: null,
+    pageTextContent: {},
+    currentHighlightedSpans: []
 };

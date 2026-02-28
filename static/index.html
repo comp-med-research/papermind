@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PaperMind - AI Reading Assistant for ADHD</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
@@ -19,7 +20,10 @@
                     <div id="readingIndicator" class="reading-indicator hidden">
                         🎯 Reading this section...
                     </div>
-                    <canvas id="pdfCanvas"></canvas>
+                    <div id="pdfContainer" class="pdf-container">
+                        <canvas id="pdfCanvas"></canvas>
+                        <div id="textLayer" class="textLayer"></div>
+                    </div>
                 </div>
             </div>
             <div class="pdf-controls">
@@ -28,6 +32,12 @@
                     <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
                 </div>
                 <button class="btn btn-secondary" onclick="nextPage()">Next ▶</button>
+                <div class="pdf-zoom-controls">
+                    <button class="btn btn-secondary" onclick="zoomOut()" title="Zoom Out">🔍−</button>
+                    <span id="zoomLevel" class="zoom-level">100%</span>
+                    <button class="btn btn-secondary" onclick="zoomIn()" title="Zoom In">🔍+</button>
+                    <button class="btn btn-secondary" onclick="resetZoom()" title="Reset Zoom">⟲</button>
+                </div>
             </div>
         </div>
 
@@ -148,5 +158,6 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script type="module" src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/debug.js"></script>
 </body>
 </html>

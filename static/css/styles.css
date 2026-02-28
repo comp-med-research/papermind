@@ -52,12 +52,68 @@ body {
     display: inline-block;
 }
 
-#pdfCanvas {
+.pdf-container {
+    position: relative;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    max-width: 100%;
-    height: auto;
+    display: inline-block;
+}
+
+#pdfCanvas {
     display: block;
 }
+
+/* PDF.js Text Layer */
+.textLayer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    overflow: hidden;
+    opacity: 1;
+    line-height: 1.0;
+    z-index: 2;
+}
+
+.textLayer > span {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: pointer;
+    transform-origin: 0% 0%;
+    user-select: text;
+}
+
+.textLayer > span:hover {
+    background: rgba(102, 126, 234, 0.2) !important;
+}
+
+/* Text Highlighting */
+.textLayer .highlight {
+    background: rgba(255, 235, 59, 0.7) !important;
+    color: transparent !important;
+    border-radius: 2px;
+    animation: highlightPulse 0.3s ease;
+    box-shadow: 0 0 5px rgba(255, 235, 59, 0.5);
+}
+
+.textLayer .highlight-word {
+    background: rgba(102, 126, 234, 0.6) !important;
+    color: transparent !important;
+    border-radius: 2px;
+}
+
+@keyframes highlightPulse {
+    0% { background: rgba(255, 235, 59, 0.4); }
+    50% { background: rgba(255, 235, 59, 0.9); }
+    100% { background: rgba(255, 235, 59, 0.7); }
+}
+
+/* Debug mode - uncomment to see text layer */
+/* .textLayer > span {
+    background: rgba(255, 0, 0, 0.1) !important;
+    border: 1px solid red;
+} */
 
 .reading-indicator {
     position: absolute;
@@ -82,10 +138,12 @@ body {
 .pdf-controls {
     display: flex;
     justify-content: center;
-    gap: 10px;
+    align-items: center;
+    gap: 15px;
     margin-top: 15px;
     padding-top: 15px;
     border-top: 2px solid #f0f4ff;
+    flex-wrap: wrap;
 }
 
 .pdf-page-info {
@@ -93,6 +151,22 @@ body {
     align-items: center;
     gap: 10px;
     color: #666;
+}
+
+.pdf-zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 15px;
+    border-left: 2px solid #f0f4ff;
+}
+
+.zoom-level {
+    min-width: 50px;
+    text-align: center;
+    font-weight: 600;
+    color: #667eea;
+    font-size: 0.9em;
 }
 
 /* Container Styles */

@@ -1,11 +1,13 @@
 import { state } from './config.js';
+import { renderTextLayer, clearHighlights } from './textHighlight.js';
 
 // PDF.js setup
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 export function renderPage(num) {
+    console.log('Rendering page:', num);
     state.pageRendering = true;
-    state.pdfDoc.getPage(num).then(function(page) {
+    state.pdfDoc.getPage(num).then(async function(page) {
         const canvas = document.getElementById('pdfCanvas');
         const ctx = canvas.getContext('2d');
         const viewport = page.getViewport({scale: state.scale});
@@ -19,16 +21,31 @@ export function renderPage(num) {
         };
 
         const renderTask = page.render(renderContext);
-        renderTask.promise.then(function() {
-            state.pageRendering = false;
-            if (state.pageNumPending !== null) {
-                renderPage(state.pageNumPending);
-                state.pageNumPending = null;
-            }
-        });
+        await renderTask.promise;
+        console.log('Canvas rendered, now rendering text layer...');
+        
+        // Render text layer on top
+        try {
+            await renderTextLayer(page, viewport);
+            console.log('Text layer rendered successfully');
+        } catch (error) {
+            console.error('Failed to render text layer:', error);
+        }
+        
+        state.pageRendering = false;
+        if (state.pageNumPending !== null) {
+            renderPage(state.pageNumPending);
+            state.pageNumPending = null;
+        }
+    }).catch(error => {
+        console.error('Error rendering page:', error);
+        state.pageRendering = false;
     });
 
     document.getElementById('pageNum').textContent = num;
+    
+    // Clear highlights when changing pages
+    clearHighlights();
 }
 
 export function queueRenderPage(num) {
@@ -65,6 +82,13 @@ export async function loadPDF(file) {
             try {
                 state.pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
                 document.getElementById('pageCount').textContent = state.pdfDoc.numPages;
+                
+                // Initialize zoom level display
+                const zoomPercent = Math.round(state.scale * 100);
+                const zoomDisplay = document.getElementById('zoomLevel');
+                if (zoomDisplay) {
+                    zoomDisplay.textContent = zoomPercent + '%';
+                }
                 
                 // Render first page
                 renderPage(state.pageNum);
@@ -117,5 +141,59 @@ export function jumpToPage(pageNumber) {
         if (pdfWrapper) {
             pdfWrapper.scrollTop = 0;
         }
+    }
+}
+
+export function zoomIn() {
+    console.log('Zoom in clicked');
+    if (!state.pdfDoc) {
+        console.log('No PDF loaded');
+        return;
+    }
+    
+    if (state.scale < 3.0) { // Max zoom 300%
+        state.scale += 0.25;
+        updateZoom();
+    }
+}
+
+export function zoomOut() {
+    console.log('Zoom out clicked');
+    if (!state.pdfDoc) {
+        console.log('No PDF loaded');
+        return;
+    }
+    
+    if (state.scale > 0.5) { // Min zoom 50%
+        state.scale -= 0.25;
+        updateZoom();
+    }
+}
+
+export function resetZoom() {
+    console.log('Reset zoom clicked');
+    if (!state.pdfDoc) {
+        console.log('No PDF loaded');
+        return;
+    }
+    
+    state.scale = 1.5; // Default zoom
+    updateZoom();
+}
+
+function updateZoom() {
+    console.log('Updating zoom to', state.scale);
+    
+    // Update zoom level display
+    const zoomPercent = Math.round(state.scale * 100);
+    const zoomDisplay = document.getElementById('zoomLevel');
+    
+    if (zoomDisplay) {
+        zoomDisplay.textContent = zoomPercent + '%';
+    }
+    
+    // Re-render current page with new scale
+    if (state.pdfDoc) {
+        queueRenderPage(state.pageNum);
     }
 }

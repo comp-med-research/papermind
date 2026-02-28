@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Zoom Functions</title>
+</head>
+<body>
+    <h1>Test Page</h1>
+    <button onclick="testZoomIn()">Test Zoom In</button>
+    <button onclick="testZoomOut()">Test Zoom Out</button>
+    <button onclick="testReset()">Test Reset</button>
+    <div id="output"></div>
+    
+    <script type="module">
+        import { zoomIn, zoomOut, resetZoom } from './js/pdfViewer.js';
+        
+        window.testZoomIn = function() {
+            console.log('testZoomIn called');
+            document.getElementById('output').textContent = 'Zoom In called';
+            zoomIn();
+        };
+        
+        window.testZoomOut = function() {
+            console.log('testZoomOut called');
+            document.getElementById('output').textContent = 'Zoom Out called';
+            zoomOut();
+        };
+        
+        window.testReset = function() {
+            console.log('testReset called');
+            document.getElementById('output').textContent = 'Reset called';
+            resetZoom();
+        };
+    </script>
+</body>
+</html>
