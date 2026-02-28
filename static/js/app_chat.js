@@ -13,6 +13,7 @@ window.goHome = goHome;
 window.exportAudioOverview = exportAudioOverview;
 window.exportVideoOverview = exportVideoOverview;
 window.toggleResponseType = toggleResponseType;
+window.togglePanel = togglePanel;
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -33,19 +34,6 @@ function initializePanelResizer() {
     const resizer2 = document.getElementById('resizer2');
     if (!mainLayout || !resizer1 || !resizer2) return;
 
-    function getSourcesPct() {
-        const v = getComputedStyle(mainLayout).getPropertyValue('--sources-size').trim();
-        return parseFloat(v) || 28;
-    }
-    function getStudioPct() {
-        const v = getComputedStyle(mainLayout).getPropertyValue('--studio-size').trim();
-        return parseFloat(v) || 28;
-    }
-    function updateChatSize() {
-        const chat = Math.max(20, 100 - getSourcesPct() - getStudioPct());
-        mainLayout.style.setProperty('--chat-size', chat + '%');
-    }
-
     resizer1.addEventListener('mousedown', (e) => {
         e.preventDefault();
         resizer1.classList.add('resizing');
@@ -56,7 +44,6 @@ function initializePanelResizer() {
             const x = (e.clientX - rect.left) / rect.width * 100;
             const pct = Math.min(Math.max(x, 18), 55);
             mainLayout.style.setProperty('--sources-size', pct + '%');
-            updateChatSize();
         }
         function onUp() {
             resizer1.classList.remove('resizing');
@@ -79,7 +66,6 @@ function initializePanelResizer() {
             const x = (e.clientX - rect.left) / rect.width * 100;
             const studioPct = Math.min(Math.max(100 - x, 18), 55);
             mainLayout.style.setProperty('--studio-size', studioPct + '%');
-            updateChatSize();
         }
         function onUp() {
             resizer2.classList.remove('resizing');
@@ -211,6 +197,18 @@ function initializeKeyboardShortcuts() {
     });
     
     console.log('✅ Keyboard shortcuts initialized');
+}
+
+function togglePanel(panelId) {
+    const panel = document.getElementById(panelId + 'Panel');
+    const resizer = panelId === 'sources' ? document.getElementById('resizer1') : document.getElementById('resizer2');
+    const btn = document.getElementById(panelId + 'CollapseBtn');
+    if (!panel || !btn) return;
+
+    const collapsed = panel.classList.toggle('collapsed');
+    btn.textContent = collapsed ? '⊞' : '⊟';
+    btn.title = collapsed ? 'Expand panel' : 'Collapse panel';
+    if (resizer) resizer.style.display = collapsed ? 'none' : '';
 }
 
 console.log('📚 PaperMind Chat Module Loaded');

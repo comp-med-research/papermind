@@ -366,8 +366,12 @@
 
 /* Sources panel */
 .sources-header {
-    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
     border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0;
 }
 
 .sources-header h2 {
@@ -379,14 +383,49 @@
 
 .sources-content {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 20px;
 }
 
+/* Panel collapse button - split rectangle icon style */
+.panel-collapse-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    background: #f8fafc;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #64748b;
+    transition: all 0.2s;
+}
+
+.panel-collapse-btn:hover {
+    background: #e2e8f0;
+    color: #334155;
+}
+
+.panel.collapsed .panel-collapse-btn {
+    transform: rotate(-90deg);
+}
+
+.panel.collapsed .panel-collapse-btn.expand-icon {
+    transform: rotate(90deg);
+}
+
 /* Studio panel */
 .studio-header {
-    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
     border-bottom: 1px solid #e2e8f0;
+    flex-shrink: 0;
 }
 
 .studio-header h2 {

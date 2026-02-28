@@ -12,10 +12,11 @@
     <div class="main-layout main-layout-three-panel" id="mainLayout">
         <!-- Panel 1: Sources -->
         <div id="sourcesPanel" class="panel panel-sources">
+            <div class="sources-header">
+                <h2>📄 Sources</h2>
+                <button id="sourcesCollapseBtn" class="panel-collapse-btn" onclick="togglePanel('sources')" title="Collapse Sources panel">⊟</button>
+            </div>
             <div id="uploadSection" class="sources-content">
-                <div class="sources-header">
-                    <h2>📄 Sources</h2>
-                </div>
                 <div class="upload-section">
                     <h3>Upload Your PDF</h3>
                     <p style="margin: 20px 0; color: #666;">Drag and drop your research paper here, or click to browse</p>
@@ -124,6 +125,7 @@
         <div id="studioPanel" class="panel panel-studio">
             <div class="studio-header">
                 <h2>Studio</h2>
+                <button id="studioCollapseBtn" class="panel-collapse-btn" onclick="togglePanel('studio')" title="Collapse Studio panel">⊟</button>
             </div>
             <div class="studio-actions">
                 <button id="exportPodcastBtn" class="studio-action-btn" onclick="exportAudioOverview()" title="Generate audio overview">

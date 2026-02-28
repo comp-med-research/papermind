@@ -8,7 +8,11 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     min-height: 100vh;
-    padding: 20px;
+    padding: 20px 20px 20px 20px;
+}
+
+.main-layout-three-panel {
+    margin-right: 0;
 }
 
 .main-layout {
@@ -39,27 +43,78 @@ body {
 .main-layout-three-panel .panel-sources {
     flex: 0 1 var(--sources-size);
     min-width: 240px;
-    max-width: 45%;
+    max-width: 50%;
     background: white;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.08);
 }
 
+.main-layout-three-panel .panel-sources:not(.collapsed) .pdf-viewer-container:not(.hidden) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .main-layout-three-panel .panel-chat {
-    flex: 0 1 var(--chat-size);
-    min-width: 320px;
+    flex: 1 1 0;
+    min-width: 280px;
     background: white;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.08);
 }
 
 .main-layout-three-panel .panel-studio {
-    flex: 0 1 var(--studio-size);
-    min-width: 260px;
-    max-width: 40%;
+    flex: 0 0 var(--studio-size);
     background: white;
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+.main-layout-three-panel .panel-studio:not(.collapsed) {
+    min-width: 260px;
+}
+
+.main-layout-three-panel .panel-sources.collapsed {
+    flex: 0 0 48px;
+    min-width: 48px;
+    max-width: 48px;
+}
+
+.main-layout-three-panel .panel-sources.collapsed .sources-content,
+.main-layout-three-panel .panel-sources.collapsed .pdf-viewer-container {
+    display: none !important;
+}
+
+.main-layout-three-panel .panel-sources.collapsed .sources-header {
+    flex-direction: column;
+    border-bottom: none;
+    padding: 12px;
+}
+
+.main-layout-three-panel .panel-sources.collapsed .sources-header h2 {
+    display: none;
+}
+
+.main-layout-three-panel .panel-studio.collapsed {
+    flex: 0 0 48px;
+    min-width: 48px;
+    max-width: 48px;
+}
+
+.main-layout-three-panel .panel-studio.collapsed .studio-actions,
+.main-layout-three-panel .panel-studio.collapsed .studio-output {
+    display: none !important;
+}
+
+.main-layout-three-panel .panel-studio.collapsed .studio-header {
+    flex-direction: column;
+    border-bottom: none;
+    padding: 12px;
+}
+
+.main-layout-three-panel .panel-studio.collapsed .studio-header h2 {
+    display: none;
 }
 
 .main-layout-three-panel .sources-content {
