@@ -5,6 +5,7 @@ import { startReading, pauseReading, resumeReading } from './reading_chat.js';
 import { uploadPDF, goHome, exportPodcast } from './session_chat.js';
 import { sendMessage, handleVoiceInput, initChatInput } from './questions_chat.js';
 import { toggleResponseType, clearChat } from './chat.js';
+import { initSelectionContextMenu } from './selectionContextMenu.js';
 
 // Expose functions globally for HTML onclick handlers
 window.startReading = startReading;
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeChatHandlers();
     initializeKeyboardShortcuts();
     initializePanelResizer();
+    initSelectionContextMenu();
     
     console.log('✅ PaperMind Chat Interface Ready!');
 });

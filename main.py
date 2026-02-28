@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import time
 import uuid
 import requests
 import base64
@@ -68,7 +69,7 @@ def generate_image(prompt: str) -> str | None:
             headers={"Authorization": f"Bearer {os.getenv('RUNWARE_API_KEY')}"},
             json=[{
                 "taskType": "imageInference",
-                "taskUUID": "unique-task-id",
+                "taskUUID": str(uuid.uuid4()),
                 "positivePrompt": f"Clean educational diagram explaining: {prompt}. Minimal, clear, white background, infographic style.",
                 "model": "runware:100@1",  # FLUX Schnell — fastest model
                 "width": 512,
@@ -77,9 +78,72 @@ def generate_image(prompt: str) -> str | None:
             }]
         )
         data = response.json()
-        return data[0].get("imageURL")
+        if "data" in data and len(data["data"]) > 0:
+            return data["data"][0].get("imageURL")
+        return None
     except Exception as e:
         print(f"Runware error: {e}")
+        return None
+
+
+def generate_video(prompt: str, max_wait_seconds: int = 180, poll_interval: int = 3) -> str | None:
+    """Call Runware to generate a short educational video. Uses async + polling."""
+    try:
+        task_uuid = str(uuid.uuid4())
+        response = requests.post(
+            "https://api.runware.ai/v1",
+            headers={"Authorization": f"Bearer {os.getenv('RUNWARE_API_KEY')}"},
+            json=[{
+                "taskType": "videoInference",
+                "taskUUID": task_uuid,
+                "deliveryMethod": "async",
+                "positivePrompt": f"Educational explainer video: {prompt}. Clear, professional, smooth motion, infographic style.",
+                "model": "klingai:5@3",
+                "duration": 5,
+                "width": 1920,
+                "height": 1080,
+                "numberResults": 1,
+            }]
+        )
+        data = response.json()
+        if "errors" in data and len(data["errors"]) > 0:
+            print(f"Runware video submit error: {data['errors']}")
+            return None
+        print(f"Runware video: submitted {task_uuid}, waiting 10s before first poll...")
+        # Initial delay (video takes time to start); docs recommend this
+        time.sleep(10)
+        elapsed = 10
+        while elapsed < max_wait_seconds:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            poll_resp = requests.post(
+                "https://api.runware.ai/v1",
+                headers={"Authorization": f"Bearer {os.getenv('RUNWARE_API_KEY')}"},
+                json=[{"taskType": "getResponse", "taskUUID": task_uuid}]
+            )
+            poll_data = poll_resp.json()
+            # Check errors array — failed tasks appear here
+            if "errors" in poll_data and len(poll_data["errors"]) > 0:
+                for err in poll_data["errors"]:
+                    if err.get("taskUUID") == task_uuid:
+                        print(f"Runware video failed: {err}")
+                        return None
+                print(f"Runware poll errors: {poll_data['errors']}")
+            if "data" in poll_data and len(poll_data["data"]) > 0:
+                item = poll_data["data"][0]
+                status = item.get("status", "")
+                print(f"Runware video: poll at {elapsed}s, status={status}")
+                if status == "success":
+                    return item.get("videoURL")
+                if status == "error":
+                    print(f"Runware video error: {item}")
+                    return None
+            else:
+                print(f"Runware video: poll at {elapsed}s, no data yet (still processing)")
+        print("Runware video: timeout waiting for result")
+        return None
+    except Exception as e:
+        print(f"Runware video error: {e}")
         return None
 
 
@@ -238,6 +302,48 @@ async def interrupt(req: InterruptRequest):
         response["video_url"] = None
 
     return response
+
+
+class ExplainSelectionRequest(BaseModel):
+    selected_text: str
+    explain_type: str  # "text", "audio", "image", "video"
+    session_id: str = "default"
+
+
+@app.post("/explain-selection")
+async def explain_selection(req: ExplainSelectionRequest):
+    """Explain selected PDF text via text, audio, image, or video (Nemotron + Runware)."""
+    state = sessions.get(req.session_id)
+    full_text = full_texts.get(req.session_id, "")
+    if not state:
+        return JSONResponse(status_code=400, content={"error": "No session found"})
+    text = req.selected_text.strip()
+    if not text or len(text) < 5:
+        return JSONResponse(status_code=400, content={"error": "Select more text to explain"})
+    if len(text) > 2000:
+        text = text[:2000] + "..."
+
+    question = f"Explain this excerpt from the paper in simple, clear terms: \"{text}\""
+    rag = rag_indexes.get(req.session_id)
+    rag_retriever = rag.retrieve if rag else None
+    result = handle_interrupt(question, state, full_text, rag_retriever=rag_retriever)
+
+    out = {
+        "answer": result["answer"],
+        "embedding_backend": rag.get_embedding_backend() if rag and hasattr(rag, "get_embedding_backend") else "none",
+    }
+    if req.explain_type == "audio":
+        audio = text_to_speech(result["answer"])
+        out["audio_base64"] = audio.hex() if audio else None
+    elif req.explain_type == "image":
+        prompt = result.get("visual_prompt") or result["answer"] or text[:200]
+        img_url = generate_image(prompt)
+        out["image_url"] = img_url
+    elif req.explain_type == "video":
+        prompt = result.get("visual_prompt") or result["answer"] or text[:200]
+        video_url = generate_video(prompt)
+        out["video_url"] = video_url
+    return out
 
 
 class ExportPodcastRequest(BaseModel):
