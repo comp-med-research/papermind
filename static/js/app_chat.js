@@ -6,6 +6,7 @@ import { uploadPDF, goHome, deleteChat, exportAudioOverview, exportVideoOverview
 import { sendMessage, handleVoiceInput, initChatInput } from './questions_chat.js';
 import { toggleResponseType, clearChat } from './chat.js';
 import { initSelectionContextMenu } from './selectionContextMenu.js';
+import { initLiveTalk } from './liveTalk.js';
 
 // Expose functions globally for HTML onclick handlers
 window.togglePlayPause = togglePlayPause;
@@ -25,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeKeyboardShortcuts();
     initializePanelResizer();
     initSelectionContextMenu();
+    initLiveTalk();
     
     console.log('✅ PaperMind Chat Interface Ready!');
 });

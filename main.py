@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from anthropic import Anthropic
 from agents import SessionState, handle_start, handle_interrupt, handle_resume, get_session_summary
+from gemini_live import transcribe_audio as gemini_transcribe, live_respond
 from rag import DocumentRAG
 from podcast import generate_podcast_mp3
 
@@ -49,6 +50,7 @@ sessions: dict[str, SessionState] = {}
 full_texts: dict[str, str] = {}
 page_texts: dict[str, dict[int, str]] = {}  # session_id -> {page_num -> text}
 rag_indexes: dict[str, DocumentRAG] = {}  # session_id -> RAG index for semantic retrieval
+live_histories: dict[str, list] = {}  # session_id -> Gemini Live conversation history
 
 
 # ─────────────────────────────────────────────
@@ -542,6 +544,99 @@ async def api_info():
 
 @app.get("/health")
 async def health():
+    return {"status": "ok"}
+
+
+# ── Gemini Live Talk ───────────────────────────────────────────────────────────
+
+class LiveTalkRequest(BaseModel):
+    session_id: str = "default"
+    audio_base64: str  # WebM audio blob from browser, base64-encoded
+
+
+@app.post("/live/talk")
+async def live_talk(req: LiveTalkRequest):
+    """
+    One turn of live voice conversation about the loaded paper.
+    1. Transcribes the user's audio with Gemini Flash
+    2. Retrieves relevant RAG context from the paper
+    3. Sends message + injected history to Gemini Live
+    4. Returns WAV audio + transcripts for both sides
+    """
+    state = sessions.get(req.session_id)
+    rag = rag_indexes.get(req.session_id)
+
+    audio_bytes = base64.b64decode(req.audio_base64)
+
+    # 1. Transcribe
+    transcript = await gemini_transcribe(audio_bytes)
+    if not transcript:
+        return JSONResponse(status_code=400, content={"error": "Could not understand audio. Please try again."})
+
+    # 2. Retrieve relevant paper context via RAG
+    context = ""
+    if rag and transcript:
+        try:
+            chunks = rag.retrieve(transcript, top_k=3)
+            if chunks:
+                context = "\n\n".join([
+                    f'"{text.strip()}" [p.{page}]' for text, page in chunks
+                ])
+        except Exception as e:
+            print(f"[live_talk] RAG error: {e}")
+
+    if not context and state:
+        context = state.surrounding_context(window=5)
+
+    # 3. Build system prompt with paper context + reading state
+    knowledge_gaps = getattr(state, "knowledge_gaps", []) if state else []
+    position_info = (
+        f"Reading position: sentence {state.position} of {len(state.sentences)}"
+        if state else ""
+    )
+
+    system_prompt = f"""You are PaperMind, a warm and concise AI tutor helping someone with ADHD understand a research paper through natural voice conversation.
+
+RELEVANT PAPER CONTEXT:
+{context or "No document loaded yet — you can still chat generally."}
+
+{position_info}
+{("Known knowledge gaps for this user: " + ", ".join(knowledge_gaps)) if knowledge_gaps else ""}
+
+Guidelines:
+- Be conversational and warm — this is a spoken dialogue, not a written response
+- Keep answers brief (2-3 sentences) unless the user asks for more detail
+- Ask a short follow-up question to check understanding when appropriate
+- Reference specific parts of the paper when helpful
+- Do NOT end with "Ready to continue?" — this is a free conversation mode"""
+
+    # 4. Get conversation history
+    history = live_histories.get(req.session_id, [])
+
+    # 5. Call Gemini Live
+    wav_bytes, response_text = await live_respond(transcript, system_prompt, history)
+
+    # 6. Update history
+    history = history + [{"role": "user", "text": transcript}]
+    if response_text:
+        history = history + [{"role": "model", "text": response_text}]
+    live_histories[req.session_id] = history[-20:]  # keep last 10 turns
+
+    return {
+        "user_transcript": transcript,
+        "response_transcript": response_text,
+        "audio_base64": base64.b64encode(wav_bytes).decode() if wav_bytes else None,
+    }
+
+
+class LiveResetRequest(BaseModel):
+    session_id: str = "default"
+
+
+@app.post("/live/reset")
+async def live_reset(req: LiveResetRequest):
+    """Clear the live conversation history for a session."""
+    live_histories.pop(req.session_id, None)
     return {"status": "ok"}
 
 

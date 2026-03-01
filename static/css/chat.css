@@ -790,6 +790,57 @@
     background: #eef2ff;
 }
 
+/* ── Interactive Session button ─────────────────── */
+.live-talk-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1.5px solid #6366f1;
+    background: white;
+    color: #6366f1;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    white-space: nowrap;
+}
+
+.live-talk-btn.talk-idle:hover {
+    background: #eef2ff;
+}
+
+/* Session active — green, pulsing ring */
+.live-talk-btn.talk-session-active {
+    background: #16a34a;
+    border-color: #16a34a;
+    color: white;
+    animation: sessionPulse 2s ease-in-out infinite;
+}
+
+.live-talk-btn.talk-session-active:hover {
+    background: #15803d;
+}
+
+@keyframes sessionPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0.35); }
+    50%       { box-shadow: 0 0 0 6px rgba(22,163,74,0); }
+}
+
+/* Status text shown during active session */
+.talk-status {
+    font-size: 0.78em;
+    color: #6366f1;
+    font-weight: 500;
+    animation: fadePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes fadePulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.45; }
+}
+
 /* ── Delete Chat button ───────────────────────── */
 .chat-delete-btn {
     background: none;

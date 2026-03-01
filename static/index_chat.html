@@ -6,7 +6,7 @@
     <title>PaperMind - AI Reading Assistant for ADHD</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     <link rel="stylesheet" href="/static/css/styles.css?v=80">
-    <link rel="stylesheet" href="/static/css/chat.css?v=82">
+    <link rel="stylesheet" href="/static/css/chat.css?v=84">
 </head>
 <body>
     <div class="main-layout main-layout-three-panel" id="mainLayout">
@@ -69,6 +69,11 @@
                         <h2>Chat</h2>
                         <p>Ask me anything about the paper</p>
                     </div>
+                    <button id="liveTalkBtn" class="live-talk-btn talk-idle" title="Start voice conversation">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        Talk
+                    </button>
+                    <span id="talkStatus" class="talk-status hidden"></span>
                     <button class="home-btn chat-delete-btn" onclick="deleteChat()">Delete Chat</button>
                 </div>
                 <div id="readingStatus" class="reading-status hidden">
@@ -160,6 +165,6 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script type="module" src="/static/js/app_chat.js?v=82"></script>
+    <script type="module" src="/static/js/app_chat.js?v=84"></script>
 </body>
 </html>
