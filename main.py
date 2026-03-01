@@ -543,3 +543,22 @@ async def api_info():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+class TTSRequest(BaseModel):
+    text: str
+    session_id: str = "default"
+
+
+@app.post("/tts")
+async def tts_endpoint(req: TTSRequest):
+    """Convert arbitrary text to speech (for read-aloud on chat messages)."""
+    text = req.text.strip()
+    if not text:
+        return JSONResponse(status_code=400, content={"error": "No text provided"})
+    if len(text) > 4000:
+        text = text[:4000]
+    audio_bytes = text_to_speech(text)
+    if not audio_bytes:
+        return JSONResponse(status_code=500, content={"error": "TTS generation failed"})
+    return {"audio_base64": base64.b64encode(audio_bytes).decode()}

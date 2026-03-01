@@ -1,8 +1,84 @@
-import { state } from './config.js';
+import { API_URL, state } from './config.js';
 import { jumpToPage } from './pdfViewer.js';
 
-// Active response types
-state.activeResponseTypes = ['text', 'voice'];
+/** Lightweight markdown → HTML renderer (no external dependency) */
+function renderMarkdown(text) {
+    // Strip VISUAL prompt blocks the backend sometimes appends
+    text = text
+        .replace(/\*\*VISUAL\*\*:[\s\S]*$/i, '')
+        .replace(/\[VISUAL[\s\S]*?\]/gi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    // Escape HTML special chars first
+    const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const lines = text.split('\n');
+    const out = [];
+    let inList = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+
+        // Fenced code blocks (``` ... ```)
+        if (line.trim().startsWith('```')) {
+            if (inList) { out.push('</ul>'); inList = false; }
+            out.push('<pre><code>');
+            i++;
+            while (i < lines.length && !lines[i].trim().startsWith('```')) {
+                out.push(esc(lines[i]) + '\n');
+                i++;
+            }
+            out.push('</code></pre>');
+            continue;
+        }
+
+        // Headers
+        const hMatch = line.match(/^(#{1,3})\s+(.+)/);
+        if (hMatch) {
+            if (inList) { out.push('</ul>'); inList = false; }
+            const lvl = Math.min(hMatch[1].length + 2, 6); // map # → h3, ## → h4 (keeps size reasonable)
+            out.push(`<h${lvl}>${inlineFormat(esc(hMatch[2]))}</h${lvl}>`);
+            continue;
+        }
+
+        // Bullet list items (* or -)
+        const listMatch = line.match(/^[\*\-]\s+(.+)/);
+        if (listMatch) {
+            if (!inList) { out.push('<ul>'); inList = true; }
+            out.push(`<li>${inlineFormat(esc(listMatch[1]))}</li>`);
+            continue;
+        }
+
+        // Close list on blank or non-list line
+        if (inList && !listMatch) {
+            out.push('</ul>');
+            inList = false;
+        }
+
+        // Blank line → paragraph break
+        if (line.trim() === '') {
+            out.push('<br>');
+            continue;
+        }
+
+        out.push(`<p>${inlineFormat(esc(line))}</p>`);
+    }
+
+    if (inList) out.push('</ul>');
+    return out.join('');
+}
+
+function inlineFormat(s) {
+    return s
+        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>');
+}
+
+// Active response types (voice removed — use per-message read-aloud button instead)
+state.activeResponseTypes = ['text'];
 
 export function toggleResponseType(type) {
     const chip = document.querySelector(`.response-type-chip[data-type="${type}"]`);
@@ -40,8 +116,14 @@ export function addMessage(role, content, options = {}) {
     
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-    bubble.textContent = content;
-    
+
+    // 'ai' is the role used by questions_chat.js
+    if (role === 'ai' || role === 'assistant') {
+        bubble.innerHTML = renderMarkdown(content);
+    } else {
+        bubble.textContent = content;
+    }
+
     messageContent.appendChild(bubble);
     
     // Add timestamp and embedding pathway
@@ -57,6 +139,91 @@ export function addMessage(role, content, options = {}) {
         }
     }
     meta.innerHTML = metaHtml;
+
+    // Read-aloud button in meta row for AI messages
+    if (role === 'ai' || role === 'assistant') {
+        const readAloudBtn = document.createElement('button');
+        readAloudBtn.className = 'read-aloud-btn';
+        readAloudBtn.title = 'Read aloud';
+        readAloudBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+        </svg>`;
+
+        let ttsAudio = null;
+        // true = playing, false = paused, null = not yet loaded
+        let audioState = null;
+
+        const ICON_PLAY = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
+        const ICON_PAUSE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+        const ICON_LOADING = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+
+        readAloudBtn.addEventListener('click', async () => {
+            // If audio is loaded and playing — pause it
+            if (ttsAudio && audioState === true) {
+                ttsAudio.pause();
+                audioState = false;
+                readAloudBtn.innerHTML = ICON_PLAY;
+                readAloudBtn.classList.remove('playing');
+                readAloudBtn.title = 'Resume';
+                return;
+            }
+
+            // If audio is loaded but paused — resume from same position
+            if (ttsAudio && audioState === false) {
+                ttsAudio.play();
+                audioState = true;
+                readAloudBtn.innerHTML = ICON_PAUSE;
+                readAloudBtn.classList.add('playing');
+                readAloudBtn.title = 'Pause';
+                return;
+            }
+
+            // First click — fetch TTS audio
+            readAloudBtn.innerHTML = ICON_LOADING;
+            readAloudBtn.disabled = true;
+
+            try {
+                const plainText = bubble.textContent.trim();
+                const res = await fetch(`${API_URL}/tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: plainText, session_id: state.sessionId }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.audio_base64) throw new Error(data.error || 'TTS failed');
+
+                const bytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
+                const blob = new Blob([bytes], { type: 'audio/mpeg' });
+                ttsAudio = new Audio(URL.createObjectURL(blob));
+
+                ttsAudio.addEventListener('ended', () => {
+                    audioState = false;
+                    ttsAudio.currentTime = 0; // reset so next click replays from start
+                    audioState = null;
+                    ttsAudio = null;
+                    readAloudBtn.innerHTML = ICON_PLAY;
+                    readAloudBtn.classList.remove('playing');
+                    readAloudBtn.title = 'Read aloud';
+                });
+
+                await ttsAudio.play();
+                audioState = true;
+                readAloudBtn.innerHTML = ICON_PAUSE;
+                readAloudBtn.classList.add('playing');
+                readAloudBtn.title = 'Pause';
+            } catch (e) {
+                console.error('Read aloud error:', e);
+                readAloudBtn.innerHTML = ICON_PLAY;
+            } finally {
+                readAloudBtn.disabled = false;
+            }
+        });
+
+        meta.appendChild(readAloudBtn);
+    }
+
     messageContent.appendChild(meta);
     
     // Add sources if available
