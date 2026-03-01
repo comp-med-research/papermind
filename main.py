@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import json
 import time
 import uuid
 import requests
@@ -29,7 +30,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
+# Mount static files with no-cache for JS (avoids stale zoom/state)
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class NoCacheJS(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.endswith(".js"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
+app.add_middleware(NoCacheJS)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # in-memory session store — one session per user for the hackathon
@@ -304,6 +315,60 @@ async def interrupt(req: InterruptRequest):
         response["video_url"] = video_url
 
     return response
+
+
+class QuizSelectionRequest(BaseModel):
+    selected_text: str
+    session_id: str = "default"
+
+
+@app.post("/quiz-selection")
+async def quiz_selection(req: QuizSelectionRequest):
+    """Generate 3 multiple-choice quiz questions from selected PDF text."""
+    text = req.selected_text.strip()
+    if not text or len(text) < 20:
+        return JSONResponse(status_code=400, content={"error": "Select more text to generate a quiz"})
+    if len(text) > 3000:
+        text = text[:3000] + "..."
+
+    prompt = f"""You are a quiz generator. Given the following excerpt from an academic paper, generate exactly 3 multiple-choice questions to test understanding of the key ideas.
+
+Excerpt:
+\"\"\"
+{text}
+\"\"\"
+
+Return ONLY a valid JSON object in this exact format (no markdown, no explanation):
+{{
+  "questions": [
+    {{
+      "question": "Question text here?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct": 0,
+      "explanation": "Brief explanation of why the answer is correct."
+    }}
+  ]
+}}
+
+Rules:
+- "correct" is the 0-based index of the correct option
+- All 4 options must be plausible but only one correct
+- Questions should test genuine understanding, not trivial recall
+- Keep questions concise and clear"""
+
+    try:
+        anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        message = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = message.content[0].text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        return data
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Quiz generation failed: {str(e)}"})
 
 
 class ExplainSelectionRequest(BaseModel):

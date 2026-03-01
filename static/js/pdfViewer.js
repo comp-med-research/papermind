@@ -10,21 +10,29 @@ export function renderPage(num) {
     state.pdfDoc.getPage(num).then(async function(page) {
         const canvas = document.getElementById('pdfCanvas');
         const ctx = canvas.getContext('2d');
-        const viewport = page.getViewport({scale: state.scale});
+        const pdfContainer = document.getElementById('pdfContainer');
+
+        // Single SCALE used everywhere — canvas, viewport, text layer, wrapper
+        const viewport = page.getViewport({ scale: state.scale });
 
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
+        // Wrapper sized to exact viewport pixel dimensions — canvas & text layer stack perfectly
+        if (pdfContainer) {
+            pdfContainer.style.width = viewport.width + 'px';
+            pdfContainer.style.height = viewport.height + 'px';
+        }
+
         const renderContext = {
             canvasContext: ctx,
-            viewport: viewport
+            viewport: viewport,
         };
 
         const renderTask = page.render(renderContext);
         await renderTask.promise;
         console.log('Canvas rendered, now rendering text layer...');
-        
-        // Render text layer on top
+
         try {
             await renderTextLayer(page, viewport);
             console.log('Text layer rendered successfully');
@@ -89,11 +97,11 @@ export async function loadPDF(file) {
                 state.pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
                 document.getElementById('pageCount').textContent = state.pdfDoc.numPages;
                 
-                // Initialize zoom level display
-                const zoomPercent = Math.round(state.scale * 100);
+                // Force initial zoom to 75% (override any cached state)
+                state.scale = 0.75;
                 const zoomDisplay = document.getElementById('zoomLevel');
                 if (zoomDisplay) {
-                    zoomDisplay.textContent = zoomPercent + '%';
+                    zoomDisplay.textContent = '75%';
                 }
                 
                 // Render first page
@@ -193,7 +201,7 @@ export function resetZoom() {
         return;
     }
     
-    state.scale = 1.25; // Default zoom
+    state.scale = 0.75; // Default zoom
     updateZoom();
 }
 

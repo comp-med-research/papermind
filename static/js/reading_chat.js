@@ -1,16 +1,18 @@
 import { API_URL, state } from './config.js';
 import { showReadingIndicator, hideReadingIndicator, updatePDFPosition } from './pdfViewer.js';
-import { highlightSentence, clearHighlights } from './textHighlight.js';
+import { highlightSentence, clearHighlights, highlightCurrentWordInSentence, clearWordHighlights } from './textHighlight.js';
 import { addMessage, addSystemMessage, updateReadingStatus } from './chat.js';
+
+let wordHighlightTimeouts = [];
 
 export function updatePlayPauseButton() {
     const btn = document.getElementById('playPauseBtn');
     if (!btn) return;
     if (state.isReading) {
-        btn.textContent = '⏸️ Pause';
+        btn.textContent = '⏸';
         btn.title = 'Pause reading';
     } else {
-        btn.textContent = state.currentSentence ? '▶️ Continue' : '▶️ Start Reading';
+        btn.textContent = '▶';
         btn.title = state.currentSentence ? 'Resume reading' : 'Start reading';
     }
 }
@@ -39,7 +41,7 @@ export async function startReading() {
             addSystemMessage('🎉 Paper complete! Great job!');
             hideReadingIndicator();
             clearHighlights();
-            updateReadingStatus(null);
+            updateReadingStatus(null, false);
             state.currentSentence = null;
             updatePlayPauseButton();
             return;
@@ -50,7 +52,7 @@ export async function startReading() {
         }
 
         // Update reading status
-        updateReadingStatus(data.sentence);
+        updateReadingStatus(data.sentence, true);
 
         // Update progress
         updateProgress(data.position);
@@ -58,20 +60,16 @@ export async function startReading() {
         // Highlight the sentence in PDF
         highlightSentence(data.sentence);
 
-        // Show reading indicator on PDF
-        showReadingIndicator();
-
-        // Store current sentence
+        // Store current sentence + set reading state BEFORE playAudio
+        // so onended auto-advance works even for very short audio
         state.currentSentence = data.sentence;
+        state.isReading = true;
+        updatePlayPauseButton();
 
         // Play audio
         if (data.audio_b64) {
             playAudio(data.audio_b64, data.sentence);
         }
-
-        // Update UI
-        updatePlayPauseButton();
-        state.isReading = true;
 
     } catch (error) {
         addSystemMessage('❌ Error starting reading: ' + error.message);
@@ -82,6 +80,10 @@ export function pauseReading() {
     if (state.currentAudio) {
         state.currentAudio.pause();
     }
+    wordHighlightTimeouts.forEach((t) => clearTimeout(t));
+    wordHighlightTimeouts = [];
+    clearWordHighlights();
+    updateReadingStatus(state.currentSentence, false);
     updatePlayPauseButton();
     hideReadingIndicator();
     state.isReading = false;
@@ -100,32 +102,27 @@ export async function resumeReading() {
             addSystemMessage('🎉 Paper complete!');
             hideReadingIndicator();
             clearHighlights();
-            updateReadingStatus(null);
+            updateReadingStatus(null, false);
             state.currentSentence = null;
             updatePlayPauseButton();
             return;
         }
 
         // Update reading status
-        updateReadingStatus(data.sentence);
+        updateReadingStatus(data.sentence, true);
 
         updateProgress(data.position);
 
         // Highlight the sentence in PDF
         highlightSentence(data.sentence);
 
-        // Show reading indicator
-        showReadingIndicator();
-
-        // Store current sentence
         state.currentSentence = data.sentence;
+        state.isReading = true;
+        updatePlayPauseButton();
 
         if (data.audio_b64) {
             playAudio(data.audio_b64, data.sentence);
         }
-
-        updatePlayPauseButton();
-        state.isReading = true;
 
         addSystemMessage('▶️ Reading resumed');
 
@@ -135,8 +132,10 @@ export async function resumeReading() {
 }
 
 export function playAudio(hexString, sentence) {
-    // Convert hex string to audio
-    const bytes = new Uint8Array(hexString.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    wordHighlightTimeouts.forEach((t) => clearTimeout(t));
+    wordHighlightTimeouts = [];
+
+    const bytes = new Uint8Array(hexString.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
     const blob = new Blob([bytes], { type: 'audio/mpeg' });
     const url = URL.createObjectURL(blob);
 
@@ -144,15 +143,44 @@ export function playAudio(hexString, sentence) {
         state.currentAudio.pause();
     }
 
-    state.currentAudio = new Audio(url);
-    state.currentAudio.play();
+    const audio = new Audio(url);
+    state.currentAudio = audio;
 
-    // Auto-advance to next sentence when audio finishes
-    state.currentAudio.onended = () => {
-        if (state.isReading) {
-            setTimeout(() => startReading(), 1000);
+    function scheduleWordHighlights(duration) {
+        if (!sentence) return;
+        const words = sentence.split(/\s+/).filter((w) => w.length > 0);
+        const timePerWord = duration / Math.max(1, words.length);
+        words.forEach((_, index) => {
+            const t = setTimeout(() => {
+                if (state.currentAudio === audio) {
+                    highlightCurrentWordInSentence(sentence, index);
+                }
+            }, timePerWord * index * 1000);
+            wordHighlightTimeouts.push(t);
+        });
+    }
+
+    // Set up all listeners BEFORE play() to avoid race conditions with Blob URLs
+    audio.addEventListener('loadedmetadata', () => {
+        scheduleWordHighlights(audio.duration || 3);
+    }, { once: true });
+
+    // Fallback: if loadedmetadata already fired or never fires, use canplaythrough
+    audio.addEventListener('canplaythrough', () => {
+        if (wordHighlightTimeouts.length === 0 && audio.duration) {
+            scheduleWordHighlights(audio.duration);
+        }
+    }, { once: true });
+
+    audio.onended = () => {
+        wordHighlightTimeouts.forEach((t) => clearTimeout(t));
+        wordHighlightTimeouts = [];
+        if (state.isReading && state.currentAudio === audio) {
+            setTimeout(() => startReading(), 500);
         }
     };
+
+    audio.play().catch(err => console.warn('Audio play failed:', err));
 }
 
 export function updateProgress(position) {

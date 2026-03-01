@@ -10,7 +10,7 @@ export const state = {
     pageNum: 1,
     pageRendering: false,
     pageNumPending: null,
-    scale: 1.25,
+    scale: 0.75,
     totalSentences: 0,
     mediaRecorder: null,
     audioChunks: [],

@@ -1,6 +1,7 @@
 import { API_URL, state } from './config.js';
 import { addMessage, showTypingIndicator, hideTypingIndicator } from './chat.js';
 import { playAudio } from './reading_chat.js';
+import { renderQuizInChat } from './quiz.js';
 
 let menuEl = null;
 
@@ -29,10 +30,12 @@ function showMenu(x, y, selectedText) {
     menuEl = document.createElement('div');
     menuEl.className = 'selection-context-menu';
     menuEl.innerHTML = `
-        <button class="selection-menu-item" data-type="text">📝 Explain with text</button>
-        <button class="selection-menu-item" data-type="audio">🔊 Explain with audio</button>
-        <button class="selection-menu-item" data-type="image">🖼️ Explain with picture</button>
-        <button class="selection-menu-item" data-type="video">🎥 Explain with video</button>
+        <button class="selection-menu-item" data-action="explain" data-type="text">📝 Explain with text</button>
+        <button class="selection-menu-item" data-action="explain" data-type="audio">🔊 Explain with audio</button>
+        <button class="selection-menu-item" data-action="explain" data-type="image">🖼️ Explain with picture</button>
+        <button class="selection-menu-item" data-action="explain" data-type="video">🎥 Explain with video</button>
+        <div class="selection-menu-divider"></div>
+        <button class="selection-menu-item selection-menu-quiz" data-action="quiz">🧠 Quiz Me</button>
     `;
 
     menuEl.style.left = x + 'px';
@@ -41,9 +44,12 @@ function showMenu(x, y, selectedText) {
     menuEl.querySelectorAll('.selection-menu-item').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const type = btn.dataset.type;
             hideMenu();
-            explainSelection(selectedText, type);
+            if (btn.dataset.action === 'quiz') {
+                quizSelection(selectedText);
+            } else {
+                explainSelection(selectedText, btn.dataset.type);
+            }
         });
     });
 
@@ -61,6 +67,36 @@ function hideMenu() {
     if (menuEl && menuEl.parentNode) {
         menuEl.parentNode.removeChild(menuEl);
         menuEl = null;
+    }
+}
+
+async function quizSelection(selectedText) {
+    const snippet = selectedText.substring(0, 80) + (selectedText.length > 80 ? '...' : '');
+    addMessage('user', `Quiz me on: "${snippet}"`);
+    showTypingIndicator();
+
+    try {
+        const res = await fetch(`${API_URL}/quiz-selection`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                selected_text: selectedText,
+                session_id: state.sessionId,
+            }),
+        });
+
+        const data = await res.json();
+        hideTypingIndicator();
+
+        if (!res.ok || !data.questions) {
+            addMessage('assistant', 'Sorry, could not generate quiz questions: ' + (data.error || res.status));
+            return;
+        }
+
+        renderQuizInChat(data.questions);
+    } catch (e) {
+        hideTypingIndicator();
+        addMessage('assistant', 'Error generating quiz: ' + e.message);
     }
 }
 

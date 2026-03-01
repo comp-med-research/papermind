@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PaperMind - AI Reading Assistant for ADHD</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
-    <link rel="stylesheet" href="/static/css/styles.css">
-    <link rel="stylesheet" href="/static/css/chat.css">
+    <link rel="stylesheet" href="/static/css/styles.css?v=78">
+    <link rel="stylesheet" href="/static/css/chat.css?v=78">
 </head>
 <body>
     <div class="main-layout main-layout-three-panel" id="mainLayout">
@@ -31,16 +31,10 @@
                 </div>
             </div>
             <div id="pdfViewerContainer" class="pdf-viewer-container hidden">
-                <div class="session-controls">
-                    <h2 style="color: #667eea; margin: 0;">📄 Sources</h2>
-                    <button id="playPauseBtn" class="btn btn-primary play-pause-btn" onclick="togglePlayPause()" title="Play / Pause reading">▶️ Start Reading</button>
-                    <button class="home-btn" onclick="goHome()">🏠 End Session</button>
-                </div>
+                <button class="pdf-close-btn" onclick="goHome()" title="End session">×</button>
                 <div class="pdf-canvas-wrapper">
                     <div class="pdf-display">
-                        <div id="readingIndicator" class="reading-indicator hidden">
-                            🎯 Reading this section...
-                        </div>
+                        <div id="readingIndicator" class="reading-indicator hidden"></div>
                         <div id="pdfContainer" class="pdf-container">
                             <canvas id="pdfCanvas"></canvas>
                             <div id="textLayer" class="textLayer"></div>
@@ -48,17 +42,18 @@
                     </div>
                 </div>
                 <div class="pdf-controls">
-                    <button id="prevPageBtn" class="btn btn-secondary">◀ Previous</button>
+                    <button id="prevPageBtn" class="btn btn-secondary" title="Previous page">◀</button>
                     <div class="pdf-page-info">
-                        <span>Page <span id="pageNum">1</span> of <span id="pageCount">1</span></span>
+                        <span><span id="pageNum">1</span>/<span id="pageCount">1</span></span>
                     </div>
-                    <button id="nextPageBtn" class="btn btn-secondary">Next ▶</button>
+                    <button id="nextPageBtn" class="btn btn-secondary" title="Next page">▶</button>
                     <div class="pdf-zoom-controls">
                         <button id="zoomOutBtn" class="btn btn-secondary" title="Zoom Out">🔍−</button>
-                        <span id="zoomLevel" class="zoom-level">125%</span>
+                        <span id="zoomLevel" class="zoom-level">75%</span>
                         <button id="zoomInBtn" class="btn btn-secondary" title="Zoom In">🔍+</button>
                         <button id="resetZoomBtn" class="btn btn-secondary" title="Reset Zoom">⟲</button>
                     </div>
+                    <button id="playPauseBtn" class="btn btn-secondary pdf-play-toggle" onclick="togglePlayPause()" title="Play / Pause reading">▶</button>
                 </div>
             </div>
         </div>
@@ -74,10 +69,10 @@
                         <h2>Chat</h2>
                         <p>Ask me anything about the paper</p>
                     </div>
-                    <button class="home-btn chat-end-session" onclick="goHome()">🏠 End Session</button>
+                    <button class="home-btn chat-delete-btn" onclick="deleteChat()">Delete Chat</button>
                 </div>
                 <div id="readingStatus" class="reading-status hidden">
-                    📖 Reading: <span id="currentSentencePreview"></span>
+                    <span id="currentSentencePreview"></span>
                 </div>
                 <div id="chatMessages" class="chat-messages">
                     <div class="chat-empty-state">
@@ -164,6 +159,6 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script type="module" src="/static/js/app_chat.js"></script>
+    <script type="module" src="/static/js/app_chat.js?v=78"></script>
 </body>
 </html>

@@ -124,6 +124,14 @@ export async function uploadPDF(file) {
     }
 }
 
+export function deleteChat() {
+    if (confirm('Delete all chat messages? This cannot be undone.')) {
+        import('./chat.js').then(module => {
+            module.clearChat();
+        });
+    }
+}
+
 export function goHome() {
     if (confirm('End this session and return home?')) {
         // Stop any playing audio

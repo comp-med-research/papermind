@@ -2,7 +2,7 @@
 import { state } from './config.js';
 import { loadPDF, previousPage, nextPage, zoomIn, zoomOut, resetZoom } from './pdfViewer.js';
 import { startReading, pauseReading, resumeReading, togglePlayPause } from './reading_chat.js';
-import { uploadPDF, goHome, exportAudioOverview, exportVideoOverview } from './session_chat.js';
+import { uploadPDF, goHome, deleteChat, exportAudioOverview, exportVideoOverview } from './session_chat.js';
 import { sendMessage, handleVoiceInput, initChatInput } from './questions_chat.js';
 import { toggleResponseType, clearChat } from './chat.js';
 import { initSelectionContextMenu } from './selectionContextMenu.js';
@@ -10,6 +10,7 @@ import { initSelectionContextMenu } from './selectionContextMenu.js';
 // Expose functions globally for HTML onclick handlers
 window.togglePlayPause = togglePlayPause;
 window.goHome = goHome;
+window.deleteChat = deleteChat;
 window.exportAudioOverview = exportAudioOverview;
 window.exportVideoOverview = exportVideoOverview;
 window.toggleResponseType = toggleResponseType;

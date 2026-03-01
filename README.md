@@ -123,7 +123,7 @@ papermind/
 ├── main.py                 # FastAPI backend
 ├── agents.py              # AI agents (Orchestrator, Conversation, Memory, Reading)
 ├── static/
-│   ├── index.html         # Main UI (150 lines)
+│   ├── index_chat.html    # Main UI
 │   ├── css/
 │   │   └── styles.css     # All styles (500 lines)
 │   └── js/

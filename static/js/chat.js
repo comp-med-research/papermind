@@ -175,14 +175,20 @@ export function hideTypingIndicator() {
     }
 }
 
-export function updateReadingStatus(sentence) {
+export function updateReadingStatus(sentence, isPlaying) {
     const statusDiv = document.getElementById('readingStatus');
     const preview = document.getElementById('currentSentencePreview');
-    
+    const playPauseBtn = document.getElementById('readingPlayPauseBtn');
+
     if (sentence) {
-        const shortSentence = sentence.substring(0, 60) + (sentence.length > 60 ? '...' : '');
+        const shortSentence = sentence.substring(0, 80) + (sentence.length > 80 ? '...' : '');
         preview.textContent = shortSentence;
         statusDiv.classList.remove('hidden');
+        if (playPauseBtn) {
+            playPauseBtn.textContent = isPlaying ? '⏸' : '▶';
+            playPauseBtn.title = isPlaying ? 'Pause' : 'Resume';
+            playPauseBtn.classList.toggle('paused', !isPlaying);
+        }
     } else {
         statusDiv.classList.add('hidden');
     }
