@@ -31,8 +31,10 @@ export async function renderTextLayer(page, viewport) {
     if (!textLayerEl) return;
 
     textLayerEl.innerHTML = '';
-    textLayerEl.style.width = viewport.width + 'px';
+    textLayerEl.style.width  = viewport.width  + 'px';
     textLayerEl.style.height = viewport.height + 'px';
+    // PDF.js 3.x uses this CSS variable internally for span positioning
+    textLayerEl.style.setProperty('--scale-factor', viewport.scale);
 
     try {
         // Get text content for our sentence matching
@@ -48,6 +50,17 @@ export async function renderTextLayer(page, viewport) {
             textDivs,
         });
         await renderTask.promise;
+
+        // Stamp each div with its PDF coordinate so highlightSentence can sort
+        // by the actual document coordinate system (reliable reading order) instead
+        // of relying on getBoundingClientRect which is affected by scroll/transforms.
+        // PDF Y axis increases upward: larger transform[5] = higher on the page.
+        textContent.items.forEach((item, i) => {
+            if (textDivs[i] && Array.isArray(item.transform)) {
+                textDivs[i].dataset.pdfX = item.transform[4].toFixed(2);
+                textDivs[i].dataset.pdfY = item.transform[5].toFixed(2);
+            }
+        });
 
         // Post-process: add our classes for word-level highlighting
         textDivs.forEach((div, index) => {
@@ -114,14 +127,25 @@ function normalizeForMatch(text) {
 /**
  * Find the minimal contiguous range of tokens that contains the search text.
  * Uses character-level mapping for precise highlighting.
+ *
+ * tokens must be word-only (no whitespace entries) — whitespace tokens
+ * normalise to "" and would create double spaces in fullNorm, making
+ * indexOf fail for any single-spaced search string.
  */
 function findTokenRange(tokens, searchNorm) {
     let fullNorm = '';
     const ranges = [];
     for (const t of tokens) {
+        const norm = normalizeForMatch(t);
+        // Skip tokens that are purely whitespace — they produce "" after
+        // normalisation and would otherwise insert a double space.
+        if (!norm) {
+            ranges.push({ start: fullNorm.length, end: fullNorm.length });
+            continue;
+        }
         const start = fullNorm.length;
-        let norm = normalizeForMatch(t);
         if (fullNorm.endsWith('-')) {
+            // Hyphenated word split across items — join without space
             fullNorm = fullNorm.slice(0, -1) + norm;
         } else {
             fullNorm += (fullNorm ? ' ' : '') + norm;
@@ -152,15 +176,51 @@ function findTokenRange(tokens, searchNorm) {
 
 export function highlightSentence(sentenceText) {
     clearHighlights();
-    if (!sentenceText) return;
+
+    if (!sentenceText) {
+        console.warn('[HL] highlightSentence: no sentenceText');
+        return;
+    }
+    console.log('[HL] highlightSentence called, text:', sentenceText.substring(0, 60));
 
     const textLayer = document.getElementById('textLayer');
-    if (!textLayer) return;
+    if (!textLayer) {
+        console.warn('[HL] highlightSentence: no #textLayer in DOM');
+        return;
+    }
 
-    const allTokens = Array.from(textLayer.querySelectorAll('.text-token'));
-    if (allTokens.length === 0) return;
+    // Sort text-item divs by PDF document coordinates (stamped during renderTextLayer).
+    // PDF Y increases upward, so larger pdfY = higher on the page (top of page first).
+    // This gives true visual reading order regardless of PDF content-stream order.
+    // Same-line threshold: items within 3 PDF points share a line (typical line height
+    // is 10–14 pt, so 3 pt cleanly separates lines without merging adjacent ones).
+    const LINE_Y_PT = 3;
+    const sortedItems = Array.from(textLayer.querySelectorAll('.text-item'))
+        .filter(div => div.dataset.pdfY !== undefined)
+        .sort((a, b) => {
+            const ay = parseFloat(a.dataset.pdfY), by = parseFloat(b.dataset.pdfY);
+            const dy = by - ay; // larger Y = higher on page
+            if (Math.abs(dy) > LINE_Y_PT) return -dy;            // top → bottom
+            return parseFloat(a.dataset.pdfX) - parseFloat(b.dataset.pdfX); // left → right
+        });
 
-    const tokenTexts = allTokens.map((t) => t.textContent);
+    // Collect non-whitespace tokens in visual reading order from each sorted item
+    const wordTokens = [];
+    sortedItems.forEach(div => {
+        div.querySelectorAll('.text-token').forEach(t => {
+            if (/\S/.test(t.textContent)) wordTokens.push(t);
+        });
+    });
+
+    console.log('[HL] wordTokens:', wordTokens.length,
+        '| sample:', wordTokens.slice(0, 5).map(t => JSON.stringify(t.textContent)).join(', '));
+
+    if (wordTokens.length === 0) {
+        console.warn('[HL] highlightSentence: textLayer has no word tokens yet (no data-pdf-y attrs?)');
+        return;
+    }
+
+    const tokenTexts = wordTokens.map((t) => t.textContent);
 
     // Try progressively shorter prefixes until we get a match.
     // Shorter prefix = tighter highlight region (avoids huge block highlighting).
@@ -170,6 +230,8 @@ export function highlightSentence(sentenceText) {
         const prefix = normalizeForMatch(sentenceText.substring(0, len));
         if (prefix.length < 15) continue;
         indices = findTokenRange(tokenTexts, prefix);
+        console.log('[HL] prefix len', len, '→ norm:', JSON.stringify(prefix.substring(0, 40)),
+            '| indices found:', indices.length);
         if (indices.length > 0) break;
     }
 
@@ -177,15 +239,24 @@ export function highlightSentence(sentenceText) {
     if (indices.length === 0) {
         const words = normalizeForMatch(sentenceText).split(/\s+/).filter(w => w.length > 3);
         const anchor = words.slice(0, 5).join(' ');
+        console.log('[HL] last-resort anchor:', JSON.stringify(anchor));
         if (anchor) indices = findTokenRange(tokenTexts, anchor);
+        console.log('[HL] last-resort indices:', indices.length);
+    }
+
+    if (indices.length === 0) {
+        console.warn('[HL] no match found — dumping first 20 token texts vs search:',
+            tokenTexts.slice(0, 20));
+        return;
     }
 
     const highlightedSpans = [];
     indices.forEach((i) => {
-        allTokens[i].classList.add('highlight');
-        highlightedSpans.push(allTokens[i]);
+        wordTokens[i].classList.add('highlight');
+        highlightedSpans.push(wordTokens[i]);
     });
 
+    console.log('[HL] applied .highlight to', highlightedSpans.length, 'spans');
     state.currentHighlightedSpans = highlightedSpans;
     if (highlightedSpans.length > 0) {
         highlightedSpans[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -216,7 +287,22 @@ export function highlightCurrentWordInSentence(sentenceText, wordIndex) {
     textLayer.querySelectorAll('.highlight-word').forEach((s) => s.classList.remove('highlight-word'));
     if (!sentenceText || wordIndex < 0) return;
 
-    const highlightedSpans = Array.from(textLayer.querySelectorAll('.text-token.highlight'));
+    // Sort highlighted spans using their parent div's PDF coordinates (same logic as
+    // highlightSentence) so word-index counting matches visual reading order.
+    const LINE_Y_PT = 3;
+    const highlightedSpans = Array.from(textLayer.querySelectorAll('.text-token.highlight'))
+        .sort((a, b) => {
+            const pa = a.closest('.text-item'), pb = b.closest('.text-item');
+            if (!pa || !pb) return 0;
+            const ay = parseFloat(pa.dataset.pdfY || 0), by = parseFloat(pb.dataset.pdfY || 0);
+            const dy = by - ay;
+            if (Math.abs(dy) > LINE_Y_PT) return -dy;
+            const ax = parseFloat(pa.dataset.pdfX || 0), bx = parseFloat(pb.dataset.pdfX || 0);
+            if (ax !== bx) return ax - bx;
+            // Same text-item: preserve DOM order
+            const spans = Array.from(pa.querySelectorAll('.text-token'));
+            return spans.indexOf(a) - spans.indexOf(b);
+        });
     if (highlightedSpans.length === 0) return;
 
     let wordCount = 0;

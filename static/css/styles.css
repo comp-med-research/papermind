@@ -280,6 +280,11 @@ body {
     position: relative;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     overflow: hidden;
+    /* Explicit content-box so borders/padding never shrink the content area
+       and cause coordinate mismatches between canvas and text layer */
+    box-sizing: content-box;
+    padding: 0;
+    border: 0;
 }
 
 #pdfCanvas {
@@ -293,7 +298,9 @@ body {
     top: 0;
     right: 0;
     bottom: 0;
-    overflow: hidden;
+    /* overflow: visible so highlight spans at the right/bottom edge are not
+       clipped by the layer boundary (parent .pdf-container clips instead) */
+    overflow: visible;
     opacity: 1;
     line-height: 1.0;
     z-index: 2;
@@ -308,6 +315,10 @@ body {
 }
 
 .textLayer .text-token {
+    /* PDF.js CDN CSS sets `.textLayer span { position: absolute }` which stacks
+       all our word-token spans at (0,0) inside their parent. Override to static
+       so tokens flow inline and spread across the line as intended. */
+    position: static !important;
     display: inline;
     color: transparent;
     cursor: text;

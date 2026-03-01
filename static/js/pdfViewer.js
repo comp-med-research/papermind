@@ -12,21 +12,27 @@ export function renderPage(num) {
         const ctx = canvas.getContext('2d');
         const pdfContainer = document.getElementById('pdfContainer');
 
-        // Single SCALE used everywhere — canvas, viewport, text layer, wrapper
         const viewport = page.getViewport({ scale: state.scale });
+        const dpr = window.devicePixelRatio || 1;
 
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
+        // Backing-store size in device pixels (avoids blur/drift on retina)
+        canvas.width  = Math.floor(viewport.width  * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        // Display size in CSS pixels — everything else works in CSS pixels
+        canvas.style.width  = viewport.width  + 'px';
+        canvas.style.height = viewport.height + 'px';
 
-        // Wrapper sized to exact viewport pixel dimensions — canvas & text layer stack perfectly
+        // Container + text layer must match CSS pixel size exactly
         if (pdfContainer) {
-            pdfContainer.style.width = viewport.width + 'px';
+            pdfContainer.style.width  = viewport.width  + 'px';
             pdfContainer.style.height = viewport.height + 'px';
         }
 
         const renderContext = {
             canvasContext: ctx,
             viewport: viewport,
+            // Scale the canvas context so PDF.js draws into the larger backing buffer
+            transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
         };
 
         const renderTask = page.render(renderContext);
