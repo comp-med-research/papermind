@@ -94,16 +94,153 @@ export function toggleResponseType(type) {
     console.log('Active response types:', state.activeResponseTypes);
 }
 
+// ─────────────────────────────────────────────
+// SHARED HELPERS used by both addMessage and createStreamingMessage
+// ─────────────────────────────────────────────
+
+const ICON_PLAY    = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
+const ICON_PAUSE   = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+const ICON_LOADING = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+
+/** Creates and wires up a read-aloud button for an AI message bubble. */
+function _buildReadAloudButton(bubble, audioBase64 = null) {
+    const btn = document.createElement('button');
+    btn.className = 'read-aloud-btn';
+    btn.title = 'Read aloud';
+    btn.innerHTML = ICON_PLAY;
+
+    let ttsAudio = null;
+    let audioState = null; // null = not loaded, true = playing, false = paused
+
+    async function loadAndPlay(b64, mimeType = 'audio/mpeg') {
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        const blob  = new Blob([bytes], { type: mimeType });
+        ttsAudio = new Audio(URL.createObjectURL(blob));
+        ttsAudio.addEventListener('ended', () => {
+            audioState = null;
+            ttsAudio = null;
+            btn.innerHTML = ICON_PLAY;
+            btn.classList.remove('playing');
+            btn.title = 'Read aloud';
+        });
+        await ttsAudio.play();
+        audioState = true;
+        btn.innerHTML = ICON_PAUSE;
+        btn.classList.add('playing');
+        btn.title = 'Pause';
+    }
+
+    btn.addEventListener('click', async () => {
+        if (ttsAudio && audioState === true) {
+            ttsAudio.pause();
+            audioState = false;
+            btn.innerHTML = ICON_PLAY;
+            btn.classList.remove('playing');
+            btn.title = 'Resume';
+            return;
+        }
+        if (ttsAudio && audioState === false) {
+            ttsAudio.play();
+            audioState = true;
+            btn.innerHTML = ICON_PAUSE;
+            btn.classList.add('playing');
+            btn.title = 'Pause';
+            return;
+        }
+        // No audio loaded yet — fetch TTS from server
+        btn.innerHTML = ICON_LOADING;
+        btn.disabled = true;
+        try {
+            const plainText = bubble.textContent.trim();
+            const res = await fetch(`${API_URL}/tts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: plainText, session_id: state.sessionId }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.audio_base64) throw new Error(data.error || 'TTS failed');
+            await loadAndPlay(data.audio_base64);
+        } catch (e) {
+            console.error('Read aloud error:', e);
+            btn.innerHTML = ICON_PLAY;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    // Auto-start if audio was pre-generated (e.g. "Explain with audio")
+    if (audioBase64) {
+        btn.innerHTML = ICON_LOADING;
+        btn.disabled = true;
+        loadAndPlay(audioBase64, 'audio/mpeg')
+            .catch(e => { console.error('Auto-play error:', e); btn.innerHTML = ICON_PLAY; })
+            .finally(() => { btn.disabled = false; });
+    }
+
+    return btn;
+}
+
+/** Appends meta row (time + embedding badge + read-aloud) to messageContent. */
+function _appendMetaRow(messageContent, bubble, options = {}) {
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
+    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    let metaHtml = `<span class="message-time">${time}</span>`;
+    if (options.embeddingBackend) {
+        const label = options.embeddingBackend === 'nvidia' ? 'NVIDIA Nemotron'
+            : options.embeddingBackend === 'sentence-transformers' ? 'sentence-transformers' : '';
+        if (label) metaHtml += ` <span class="embedding-badge">🔍 ${label}</span>`;
+    }
+    meta.innerHTML = metaHtml;
+    meta.appendChild(_buildReadAloudButton(bubble, options.audioBase64 || null));
+    messageContent.appendChild(meta);
+}
+
+/** Appends RAG source chips to messageContent. */
+function _appendSources(messageContent, sources) {
+    if (!sources || sources.length === 0) return;
+    const sourcesDiv = document.createElement('div');
+    sourcesDiv.className = 'message-sources';
+    sourcesDiv.innerHTML = '<h4>📚 Sources</h4>';
+    sources.forEach(source => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'source-chip';
+        chip.style.cursor = 'pointer';
+        const textSpan = document.createElement('span');
+        textSpan.textContent = source.text.substring(0, 50) + (source.text.length > 50 ? '...' : '');
+        chip.appendChild(textSpan);
+        const pageNum = source.page != null ? parseInt(source.page, 10) : null;
+        if (pageNum != null && !isNaN(pageNum)) {
+            const badge = document.createElement('span');
+            badge.className = 'page-badge';
+            badge.textContent = ` p${pageNum}`;
+            chip.appendChild(badge);
+        }
+        chip.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const pdfContainer = document.getElementById('pdfViewerContainer');
+            if (pdfContainer) pdfContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            if (pageNum != null && !isNaN(pageNum) && state.pdfDoc) {
+                const textForHighlight = source.text.replace(/\*+/g, '').replace(/^["']+|["']+$/g, '').replace(/\.{2,}$/, '').trim();
+                jumpToPage(pageNum, textForHighlight);
+            } else {
+                addSystemMessage('📄 Page could not be located for this source. Try scrolling the PDF manually.');
+            }
+        });
+        sourcesDiv.appendChild(chip);
+    });
+    messageContent.appendChild(sourcesDiv);
+}
+
 export function addMessage(role, content, options = {}) {
     const messagesContainer = document.getElementById('chatMessages');
     
     // Remove empty state if present
     const emptyState = messagesContainer.querySelector('.chat-empty-state');
-    if (emptyState) {
-        emptyState.remove();
-    }
+    if (emptyState) emptyState.remove();
     
-    // Create message element
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}-message`;
     
@@ -117,7 +254,6 @@ export function addMessage(role, content, options = {}) {
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
 
-    // 'ai' is the role used by questions_chat.js
     if (role === 'ai' || role === 'assistant') {
         bubble.innerHTML = renderMarkdown(content);
     } else {
@@ -126,155 +262,18 @@ export function addMessage(role, content, options = {}) {
 
     messageContent.appendChild(bubble);
     
-    // Add timestamp and embedding pathway
-    const meta = document.createElement('div');
-    meta.className = 'message-meta';
-    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    let metaHtml = `<span class="message-time">${time}</span>`;
-    if (options.embeddingBackend) {
-        const backendLabel = options.embeddingBackend === 'nvidia' ? 'NVIDIA Nemotron' : 
-            options.embeddingBackend === 'sentence-transformers' ? 'sentence-transformers' : '';
-        if (backendLabel) {
-            metaHtml += ` <span class="embedding-badge">🔍 ${backendLabel}</span>`;
-        }
-    }
-    meta.innerHTML = metaHtml;
-
-    // Read-aloud button in meta row for AI messages
     if (role === 'ai' || role === 'assistant') {
-        const readAloudBtn = document.createElement('button');
-        readAloudBtn.className = 'read-aloud-btn';
-        readAloudBtn.title = 'Read aloud';
-        readAloudBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-        </svg>`;
-
-        let ttsAudio = null;
-        // true = playing, false = paused, null = not yet loaded
-        let audioState = null;
-
-        const ICON_PLAY = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
-        const ICON_PAUSE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
-        const ICON_LOADING = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
-
-        readAloudBtn.addEventListener('click', async () => {
-            // If audio is loaded and playing — pause it
-            if (ttsAudio && audioState === true) {
-                ttsAudio.pause();
-                audioState = false;
-                readAloudBtn.innerHTML = ICON_PLAY;
-                readAloudBtn.classList.remove('playing');
-                readAloudBtn.title = 'Resume';
-                return;
-            }
-
-            // If audio is loaded but paused — resume from same position
-            if (ttsAudio && audioState === false) {
-                ttsAudio.play();
-                audioState = true;
-                readAloudBtn.innerHTML = ICON_PAUSE;
-                readAloudBtn.classList.add('playing');
-                readAloudBtn.title = 'Pause';
-                return;
-            }
-
-            // First click — fetch TTS audio
-            readAloudBtn.innerHTML = ICON_LOADING;
-            readAloudBtn.disabled = true;
-
-            try {
-                const plainText = bubble.textContent.trim();
-                const res = await fetch(`${API_URL}/tts`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: plainText, session_id: state.sessionId }),
-                });
-                const data = await res.json();
-                if (!res.ok || !data.audio_base64) throw new Error(data.error || 'TTS failed');
-
-                const bytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
-                const blob = new Blob([bytes], { type: 'audio/mpeg' });
-                ttsAudio = new Audio(URL.createObjectURL(blob));
-
-                ttsAudio.addEventListener('ended', () => {
-                    audioState = false;
-                    ttsAudio.currentTime = 0; // reset so next click replays from start
-                    audioState = null;
-                    ttsAudio = null;
-                    readAloudBtn.innerHTML = ICON_PLAY;
-                    readAloudBtn.classList.remove('playing');
-                    readAloudBtn.title = 'Read aloud';
-                });
-
-                await ttsAudio.play();
-                audioState = true;
-                readAloudBtn.innerHTML = ICON_PAUSE;
-                readAloudBtn.classList.add('playing');
-                readAloudBtn.title = 'Pause';
-            } catch (e) {
-                console.error('Read aloud error:', e);
-                readAloudBtn.innerHTML = ICON_PLAY;
-            } finally {
-                readAloudBtn.disabled = false;
-            }
-        });
-
-        meta.appendChild(readAloudBtn);
-    }
-
-    messageContent.appendChild(meta);
-    
-    // Add sources if available
-    if (options.sources && options.sources.length > 0) {
-        const sourcesDiv = document.createElement('div');
-        sourcesDiv.className = 'message-sources';
-        sourcesDiv.innerHTML = '<h4>📚 Sources</h4>';
-        
-        options.sources.forEach(source => {
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'source-chip';
-            chip.style.cursor = 'pointer';
-            
-            const textSpan = document.createElement('span');
-            textSpan.textContent = source.text.substring(0, 50) + (source.text.length > 50 ? '...' : '');
-            chip.appendChild(textSpan);
-            
-            const pageNum = source.page != null ? parseInt(source.page, 10) : null;
-            if (pageNum != null && !isNaN(pageNum)) {
-                const badge = document.createElement('span');
-                badge.className = 'page-badge';
-                badge.textContent = ` p${pageNum}`;
-                chip.appendChild(badge);
-            }
-            
-            const sourceText = source.text;
-            chip.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const pdfContainer = document.getElementById('pdfViewerContainer');
-                if (pdfContainer) {
-                    pdfContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
-                
-                if (pageNum != null && !isNaN(pageNum) && state.pdfDoc) {
-                    const textForHighlight = sourceText.replace(/\*+/g, '').replace(/^["']+|["']+$/g, '').replace(/\.{2,}$/, '').trim();
-                    jumpToPage(pageNum, textForHighlight);
-                } else {
-                    addSystemMessage('📄 Page could not be located for this source. Try scrolling the PDF manually.');
-                }
-            });
-            
-            sourcesDiv.appendChild(chip);
-        });
-        
-        messageContent.appendChild(sourcesDiv);
+        _appendMetaRow(messageContent, bubble, options);
+    } else {
+        const meta = document.createElement('div');
+        meta.className = 'message-meta';
+        const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        meta.innerHTML = `<span class="message-time">${time}</span>`;
+        messageContent.appendChild(meta);
     }
     
-    // Add visual media if available
+    _appendSources(messageContent, options.sources);
+    
     if (options.imageUrl) {
         const visualDiv = document.createElement('div');
         visualDiv.className = 'message-visual';
@@ -297,13 +296,72 @@ export function addMessage(role, content, options = {}) {
     
     messageDiv.appendChild(avatar);
     messageDiv.appendChild(messageContent);
-    
     messagesContainer.appendChild(messageDiv);
-    
-    // Scroll to bottom
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
     
     return messageDiv;
+}
+
+/**
+ * Creates an empty AI message bubble that can be filled incrementally.
+ * Returns { appendText(delta), finalize(opts) }.
+ * Used by the streaming endpoint to show text as it arrives.
+ */
+export function createStreamingMessage() {
+    const messagesContainer = document.getElementById('chatMessages');
+    const emptyState = messagesContainer.querySelector('.chat-empty-state');
+    if (emptyState) emptyState.remove();
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'chat-message ai-message';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'message-avatar ai-avatar';
+    avatar.textContent = '🤖';
+
+    const messageContent = document.createElement('div');
+    messageContent.className = 'message-content';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble streaming';
+
+    messageContent.appendChild(bubble);
+    messageDiv.appendChild(avatar);
+    messageDiv.appendChild(messageContent);
+    messagesContainer.appendChild(messageDiv);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    let rawText = '';
+
+    return {
+        /** Append a text delta from the SSE stream. */
+        appendText(delta) {
+            rawText += delta;
+            bubble.textContent = rawText;
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        },
+        /** Called once the stream finishes — renders markdown and adds meta/sources. */
+        finalize(opts = {}) {
+            bubble.classList.remove('streaming');
+            if (opts.error) {
+                bubble.textContent = `❌ Error: ${opts.error}`;
+                return;
+            }
+            bubble.innerHTML = renderMarkdown(rawText);
+            _appendMetaRow(messageContent, bubble, opts);
+            _appendSources(messageContent, opts.sources);
+            if (opts.imageUrl) {
+                const visualDiv = document.createElement('div');
+                visualDiv.className = 'message-visual';
+                const img = document.createElement('img');
+                img.src = opts.imageUrl;
+                img.alt = 'Visual explanation';
+                visualDiv.appendChild(img);
+                messageContent.appendChild(visualDiv);
+            }
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+    };
 }
 
 export function addSystemMessage(text) {

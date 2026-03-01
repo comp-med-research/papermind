@@ -1,66 +1,122 @@
 import { API_URL, state } from './config.js';
-import { pauseReading, playAudio } from './reading_chat.js';
-import { addMessage, showTypingIndicator, hideTypingIndicator } from './chat.js';
+import { pauseReading } from './reading_chat.js';
+import { addMessage, createStreamingMessage, showTypingIndicator, hideTypingIndicator } from './chat.js';
 
 export async function sendMessage() {
     const input = document.getElementById('chatInput');
     const question = input.value.trim();
-    
-    if (!question) {
-        return;
-    }
-    
-    // Pause reading
+    if (!question) return;
+
     pauseReading();
-    
-    // Add user message to chat
     addMessage('user', question);
-    
-    // Clear input
     input.value = '';
     input.style.height = 'auto';
-    
-    // Show typing indicator
+
+    // Use streaming for text responses; fall back to regular endpoint for video
+    // (video generation takes 2+ minutes and doesn't benefit from streaming)
+    const needsVideo = state.activeResponseTypes.includes('video');
+    if (!needsVideo) {
+        await _sendStreaming(question);
+    } else {
+        await _sendRegular(question);
+    }
+}
+
+async function _sendStreaming(question) {
     showTypingIndicator();
-    
+    let streamingMsg = null;
+
+    try {
+        const response = await fetch(`${API_URL}/interrupt/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                question,
+                session_id: state.sessionId,
+                response_types: state.activeResponseTypes,
+            }),
+        });
+
+        if (!response.ok) throw new Error(`Server error ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamStarted = false;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep any incomplete line
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const raw = line.slice(6).trim();
+                if (!raw) continue;
+
+                let event;
+                try { event = JSON.parse(raw); } catch { continue; }
+
+                if (event.error) {
+                    hideTypingIndicator();
+                    if (streamingMsg) streamingMsg.finalize({ error: event.error });
+                    else addMessage('ai', `❌ ${event.error}`);
+                    return;
+                }
+
+                if (event.text) {
+                    if (!streamStarted) {
+                        hideTypingIndicator();
+                        streamingMsg = createStreamingMessage();
+                        streamStarted = true;
+                    }
+                    streamingMsg.appendText(event.text);
+                }
+
+                if (event.done) {
+                    if (streamingMsg) {
+                        streamingMsg.finalize({
+                            sources: event.sources,
+                            embeddingBackend: event.embedding_backend,
+                            imageUrl: event.image_url,
+                        });
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        hideTypingIndicator();
+        if (streamingMsg) streamingMsg.finalize({ error: error.message });
+        else addMessage('ai', '❌ Sorry, I encountered an error: ' + error.message);
+    }
+}
+
+async function _sendRegular(question) {
+    showTypingIndicator();
     try {
         const response = await fetch(`${API_URL}/interrupt`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                question: question,
+                question,
                 session_id: state.sessionId,
-                response_types: state.activeResponseTypes
-            })
+                response_types: state.activeResponseTypes,
+            }),
         });
-
         const data = await response.json();
-        
-        // Hide typing indicator
         hideTypingIndicator();
-        
-        // Add AI response
         if (data.answer) {
             addMessage('ai', data.answer, {
                 sources: data.sources,
                 imageUrl: data.image_url,
                 videoUrl: data.video_url,
-                embeddingBackend: data.embedding_backend
+                embeddingBackend: data.embedding_backend,
             });
         }
-        
-        // Play voice if requested
-        if (state.activeResponseTypes.includes('voice') && data.audio_b64) {
-            playAudio(data.audio_b64);
-        }
-        
-        // Update stats
-        if (data.summary) {
-            updateStats(data.summary);
-        }
-
+        if (data.summary) updateStats(data.summary);
     } catch (error) {
         hideTypingIndicator();
         addMessage('ai', '❌ Sorry, I encountered an error: ' + error.message);

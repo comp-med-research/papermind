@@ -12,8 +12,8 @@ import { addMessage } from './chat.js';
 
 // ── VAD config ─────────────────────────────────────────────────────────────────
 const SILENCE_THRESHOLD  = 18;    // 0-255 average amplitude
-const SILENCE_DURATION   = 1300;  // ms of silence before auto-sending
-const MIN_SPEECH_MS      = 400;   // ignore blips shorter than this
+const SILENCE_DURATION   = 100;   // ms of silence before auto-sending
+const MIN_SPEECH_MS      = 200;   // ignore blips shorter than this
 
 // ── Session state ──────────────────────────────────────────────────────────────
 let sessionActive    = false;

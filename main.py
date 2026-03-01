@@ -4,6 +4,9 @@ import re
 import json
 import time
 import uuid
+import asyncio
+import threading
+import queue as stdlib_queue
 import requests
 import base64
 import fitz  # PyMuPDF
@@ -14,8 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from anthropic import Anthropic
-from agents import SessionState, handle_start, handle_interrupt, handle_resume, get_session_summary
-from gemini_live import transcribe_audio as gemini_transcribe, live_respond
+from agents import (
+    SessionState, handle_start, handle_interrupt, handle_resume, get_session_summary,
+    nemotron, prepare_conversation_context, claude_judge_knowledge_gap,
+)
+from gemini_live import live_respond_from_audio, live_respond
 from rag import DocumentRAG
 from podcast import generate_podcast_mp3
 
@@ -319,6 +325,129 @@ async def interrupt(req: InterruptRequest):
     return response
 
 
+@app.post("/interrupt/stream")
+async def interrupt_stream(req: InterruptRequest):
+    """
+    Streaming version of /interrupt — returns an SSE stream of text deltas,
+    then a final 'done' event with sources / metadata.
+    Only streams text; image generation (if requested) is appended in the done event.
+    """
+    state = sessions.get(req.session_id)
+    if not state:
+        async def _err():
+            yield f"data: {json.dumps({'error': 'No session found. Upload a PDF first.'})}\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    full_text = full_texts.get(req.session_id, "")
+    rag = rag_indexes.get(req.session_id)
+    rag_retriever = rag.retrieve if rag else None
+
+    state.status = "INTERRUPTED"
+
+    # RAG retrieval + prompt building runs synchronously before streaming begins
+    messages, retrieved_chunks = prepare_conversation_context(
+        req.question, state, rag_retriever
+    )
+    model = os.getenv("NEMOTRON_CONVERSATION_MODEL", os.getenv("NEMOTRON_MODEL", "nvidia/nemotron-3-nano"))
+
+    async def generate():
+        chunk_queue: stdlib_queue.Queue = stdlib_queue.Queue()
+
+        def _stream_nemotron():
+            """Runs the blocking Nemotron stream in a background thread."""
+            try:
+                stream = nemotron.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=400,
+                    temperature=0.4,
+                    stream=True,
+                )
+                accumulated = ""
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        accumulated += delta
+                        chunk_queue.put(("text", delta))
+                chunk_queue.put(("done", accumulated))
+            except Exception as exc:
+                chunk_queue.put(("error", str(exc)))
+
+        threading.Thread(target=_stream_nemotron, daemon=True).start()
+
+        full_answer = ""
+        final_type = None
+        final_data = None
+
+        # Process one chunk at a time, yielding event-loop control after each
+        # so HTTP chunks are actually flushed to the client progressively.
+        while final_type is None:
+            try:
+                type_, data = chunk_queue.get_nowait()
+            except stdlib_queue.Empty:
+                await asyncio.sleep(0.01)  # brief pause when queue is empty
+                continue
+
+            if type_ == "text":
+                full_answer += data
+                yield f"data: {json.dumps({'text': data})}\n\n"
+                await asyncio.sleep(0)  # release event loop so the chunk is flushed
+            else:
+                final_type = type_
+                final_data = data
+
+        if final_type == "error":
+            yield f"data: {json.dumps({'error': final_data})}\n\n"
+            return
+
+        # Clean VISUAL prompt from the streamed answer
+        visual_prompt = None
+        answer = full_answer
+        if "VISUAL:" in answer:
+            parts = answer.split("VISUAL:")
+            answer = parts[0].strip()
+            visual_prompt = parts[1].strip()
+        answer = answer.strip()
+
+        # Update session state
+        state.questions_asked.append({
+            "question": req.question,
+            "answer": answer,
+            "position": state.position,
+            "sources": [t for t, _ in retrieved_chunks],
+        })
+        state.status = "ANSWERING"
+
+        gap = claude_judge_knowledge_gap(req.question, state)
+        if gap and gap not in state.knowledge_gaps:
+            state.knowledge_gaps.append(gap)
+
+        # Build sources list
+        sources_with_pages = []
+        for chunk_text, page_num in retrieved_chunks[:5]:
+            excerpt = (chunk_text[:150] + "…") if len(chunk_text) > 150 else chunk_text
+            sources_with_pages.append({"text": excerpt.strip(), "page": page_num})
+
+        embedding_backend = (
+            rag.get_embedding_backend() if rag and hasattr(rag, "get_embedding_backend") else "none"
+        )
+        print(f"📚 RAG pathway (stream): {embedding_backend}")
+
+        # Generate image if requested (non-streaming, appended to done event)
+        image_url = None
+        if "image" in req.response_types:
+            prompt = visual_prompt or answer[:200]
+            image_url = generate_image(prompt)
+
+        yield f"data: {json.dumps({'done': True, 'sources': sources_with_pages, 'embedding_backend': embedding_backend, 'image_url': image_url, 'resume_position': state.position})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 class QuizSelectionRequest(BaseModel):
     selected_text: str
     session_id: str = "default"
@@ -403,7 +532,7 @@ async def explain_selection(req: ExplainSelectionRequest):
     }
     if req.explain_type == "audio":
         audio = text_to_speech(result["answer"])
-        out["audio_base64"] = audio.hex() if audio else None
+        out["audio_base64"] = base64.b64encode(audio).decode() if audio else None
     elif req.explain_type == "image":
         prompt = result.get("visual_prompt") or result["answer"] or text[:200]
         img_url = generate_image(prompt)
@@ -558,26 +687,23 @@ class LiveTalkRequest(BaseModel):
 async def live_talk(req: LiveTalkRequest):
     """
     One turn of live voice conversation about the loaded paper.
-    1. Transcribes the user's audio with Gemini Flash
-    2. Retrieves relevant RAG context from the paper
-    3. Sends message + injected history to Gemini Live
-    4. Returns WAV audio + transcripts for both sides
+    Audio is sent directly to Gemini Live — no separate transcription step.
+    Gemini transcribes the user's speech internally, which saves ~1-2 s per turn.
     """
     state = sessions.get(req.session_id)
     rag = rag_indexes.get(req.session_id)
+    history = live_histories.get(req.session_id, [])
 
     audio_bytes = base64.b64decode(req.audio_base64)
 
-    # 1. Transcribe
-    transcript = await gemini_transcribe(audio_bytes)
-    if not transcript:
-        return JSONResponse(status_code=400, content={"error": "Could not understand audio. Please try again."})
-
-    # 2. Retrieve relevant paper context via RAG
+    # Build paper context using the previous turn's user message for RAG
+    # (we don't have the current transcript yet — it comes back from Gemini).
+    # This keeps latency low while still providing relevant context.
     context = ""
-    if rag and transcript:
+    last_user_msg = next((h["text"] for h in reversed(history) if h["role"] == "user"), None)
+    if rag and last_user_msg:
         try:
-            chunks = rag.retrieve(transcript, top_k=3)
+            chunks = rag.retrieve(last_user_msg, top_k=3)
             if chunks:
                 context = "\n\n".join([
                     f'"{text.strip()}" [p.{page}]' for text, page in chunks
@@ -586,9 +712,8 @@ async def live_talk(req: LiveTalkRequest):
             print(f"[live_talk] RAG error: {e}")
 
     if not context and state:
-        context = state.surrounding_context(window=5)
+        context = state.surrounding_context(window=8)
 
-    # 3. Build system prompt with paper context + reading state
     knowledge_gaps = getattr(state, "knowledge_gaps", []) if state else []
     position_info = (
         f"Reading position: sentence {state.position} of {len(state.sentences)}"
@@ -610,22 +735,25 @@ Guidelines:
 - Reference specific parts of the paper when helpful
 - Do NOT end with "Ready to continue?" — this is a free conversation mode"""
 
-    # 4. Get conversation history
-    history = live_histories.get(req.session_id, [])
+    # Single Gemini Live call — handles transcription + response in one round-trip
+    wav_bytes, user_transcript, response_text = await live_respond_from_audio(
+        audio_bytes, system_prompt, history
+    )
 
-    # 5. Call Gemini Live
-    wav_bytes, response_text = await live_respond(transcript, system_prompt, history)
+    if not wav_bytes or len(wav_bytes) < 100:
+        return JSONResponse(status_code=400, content={"error": "No response from Gemini. Please try again."})
 
-    # 6. Update history
-    history = history + [{"role": "user", "text": transcript}]
+    # Update conversation history
+    display_transcript = user_transcript or "[voice]"
+    history = history + [{"role": "user", "text": display_transcript}]
     if response_text:
         history = history + [{"role": "model", "text": response_text}]
-    live_histories[req.session_id] = history[-20:]  # keep last 10 turns
+    live_histories[req.session_id] = history[-20:]
 
     return {
-        "user_transcript": transcript,
+        "user_transcript": user_transcript or None,
         "response_transcript": response_text,
-        "audio_base64": base64.b64encode(wav_bytes).decode() if wav_bytes else None,
+        "audio_base64": base64.b64encode(wav_bytes).decode(),
     }
 
 

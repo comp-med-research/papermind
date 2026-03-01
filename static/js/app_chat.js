@@ -16,6 +16,7 @@ window.exportAudioOverview = exportAudioOverview;
 window.exportVideoOverview = exportVideoOverview;
 window.toggleResponseType = toggleResponseType;
 window.togglePanel = togglePanel;
+window.toggleTheme = toggleTheme;
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
@@ -27,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initializePanelResizer();
     initSelectionContextMenu();
     initLiveTalk();
+    initTheme();
     
     console.log('✅ PaperMind Chat Interface Ready!');
 });
@@ -212,6 +214,25 @@ function togglePanel(panelId) {
     btn.textContent = collapsed ? '⊞' : '⊟';
     btn.title = collapsed ? 'Expand panel' : 'Collapse panel';
     if (resizer) resizer.style.display = collapsed ? 'none' : '';
+}
+
+function initTheme() {
+    const saved = localStorage.getItem('pm-theme') || 'light';
+    applyTheme(saved);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('pm-theme', theme);
+    const sun  = document.getElementById('themeIconSun');
+    const moon = document.getElementById('themeIconMoon');
+    if (sun)  sun.style.display  = theme === 'dark'  ? 'none'  : '';
+    if (moon) moon.style.display = theme === 'dark'  ? ''      : 'none';
 }
 
 console.log('📚 PaperMind Chat Module Loaded');

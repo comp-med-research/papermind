@@ -1,6 +1,5 @@
 import { API_URL, state } from './config.js';
 import { addMessage, showTypingIndicator, hideTypingIndicator } from './chat.js';
-import { playAudio } from './reading_chat.js';
 import { renderQuizInChat } from './quiz.js';
 
 let menuEl = null;
@@ -124,14 +123,15 @@ async function explainSelection(selectedText, explainType) {
         }
 
         const opts = { embeddingBackend: data.embedding_backend };
-        if (data.image_url) opts.imageUrl = data.image_url;
-        if (data.video_url) opts.videoUrl = data.video_url;
+        if (data.image_url)    opts.imageUrl    = data.image_url;
+        if (data.video_url)    opts.videoUrl    = data.video_url;
+        // For audio type: pass the audio to addMessage so the read-aloud
+        // button auto-starts and the user can pause/resume from it
+        if (explainType === 'audio' && data.audio_base64) {
+            opts.audioBase64 = data.audio_base64;
+        }
 
         addMessage('assistant', data.answer || 'No explanation generated.', opts);
-
-        if (explainType === 'audio' && data.audio_base64) {
-            playAudio(data.audio_base64);
-        }
     } catch (e) {
         hideTypingIndicator();
         addMessage('assistant', 'Error: ' + e.message);

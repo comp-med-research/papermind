@@ -126,18 +126,15 @@ or
 # Handles interruptions and questions
 # ─────────────────────────────────────────────
 
-def conversation_agent(
+def prepare_conversation_context(
     question: str,
     state: SessionState,
-    full_text: str,
-    rag_retriever=None,  # callable(question, top_k) -> list[(chunk_text, page_num)]
-) -> dict:
+    rag_retriever=None,
+) -> tuple[list[dict], list[tuple]]:
     """
-    Answers the user's question using:
-    1. RAG (semantic retrieval) over the full document when available
-    2. Fallback to surrounding context if no RAG index
-    3. General knowledge from Nemotron
-    Returns answer + a suggested visual prompt for Runware
+    Builds the messages list and does RAG retrieval for the conversation agent.
+    Shared by both the regular and streaming endpoints to avoid duplication.
+    Returns (messages, retrieved_chunks).
     """
 
     system_prompt = """You are a patient, brilliant tutor helping a researcher with ADHD understand a scientific paper.
@@ -151,7 +148,6 @@ Rules:
 
 The user has ADHD. Clarity and brevity are kindness."""
 
-    # RAG: semantic retrieval over full document, or fallback to positional context
     retrieved_chunks: list[tuple[str, int | None]] = []
     if rag_retriever:
         try:
@@ -171,10 +167,9 @@ The user has ADHD. Clarity and brevity are kindness."""
     else:
         context = state.surrounding_context(window=10)
 
-    # also include any previous questions for continuity
     history = ""
     if state.questions_asked:
-        last = state.questions_asked[-3:]  # last 3 Q&As
+        last = state.questions_asked[-3:]
         history = "\n".join([f"Q: {q['question']}\nA: {q['answer']}" for q in last])
 
     user_prompt = f"""
@@ -191,12 +186,31 @@ USER'S QUESTION: {question}
 Answer the question, grounded in the document. Then provide the VISUAL prompt.
 """
 
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ], retrieved_chunks
+
+
+def conversation_agent(
+    question: str,
+    state: SessionState,
+    full_text: str,
+    rag_retriever=None,  # callable(question, top_k) -> list[(chunk_text, page_num)]
+) -> dict:
+    """
+    Answers the user's question using:
+    1. RAG (semantic retrieval) over the full document when available
+    2. Fallback to surrounding context if no RAG index
+    3. General knowledge from Nemotron
+    Returns answer + a suggested visual prompt for Runware
+    """
+
+    messages, retrieved_chunks = prepare_conversation_context(question, state, rag_retriever)
+
     response = nemotron.chat.completions.create(
         model=os.getenv("NEMOTRON_CONVERSATION_MODEL", os.getenv("NEMOTRON_MODEL", "nvidia/nemotron-3-nano")),
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
+        messages=messages,
         max_tokens=400,
         temperature=0.4
     )

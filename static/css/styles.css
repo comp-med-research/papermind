@@ -886,3 +886,52 @@ body {
     background: #667eea;
     color: white;
 }
+
+/* ── Dark mode — sources / PDF panel ─────────────────────────────────────────── */
+[data-theme="dark"] .pdf-controls,
+[data-theme="dark"] .sources-header,
+[data-theme="dark"] .upload-section {
+    background: #1e1e2e;
+    border-color: #313244;
+    color: #cdd6f4;
+}
+
+[data-theme="dark"] .pdf-controls button {
+    background: #313244;
+    color: #cdd6f4;
+    border-color: #45475a;
+}
+
+[data-theme="dark"] .pdf-controls button:hover {
+    background: #45475a;
+}
+
+[data-theme="dark"] #pdfContainer {
+    background: #181825;
+}
+
+[data-theme="dark"] .panel-resizer {
+    background: #313244;
+}
+
+[data-theme="dark"] .panel-resizer:hover {
+    background: #6366f1;
+}
+
+[data-theme="dark"] .studio-panel,
+[data-theme="dark"] .studio-header {
+    background: #1e1e2e;
+    border-color: #313244;
+    color: #cdd6f4;
+}
+
+[data-theme="dark"] .studio-action-btn {
+    background: #313244;
+    border-color: #45475a;
+    color: #cdd6f4;
+}
+
+[data-theme="dark"] .studio-action-btn:hover {
+    background: #45475a;
+    border-color: #6366f1;
+}

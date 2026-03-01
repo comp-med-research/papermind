@@ -14,6 +14,8 @@ import os
 import io
 import wave
 import base64
+import asyncio
+import subprocess
 import traceback
 from dotenv import load_dotenv
 from google import genai
@@ -71,99 +73,172 @@ async def transcribe_audio(audio_bytes: bytes) -> str:
         return ""
 
 
-# ── Live conversation ──────────────────────────────────────────────────────────
+# ── Shared helpers ─────────────────────────────────────────────────────────────
 
-async def live_respond(
-    message: str,
-    system_prompt: str,
-    history: list[dict],  # [{"role": "user"|"model", "text": "..."}]
-) -> tuple[bytes, str]:
-    """
-    Send one turn to Gemini Live with full conversation history injected
-    into the system prompt.
-
-    Returns:
-        (wav_bytes, response_text)
-        wav_bytes  — 24 kHz mono PCM wrapped in a WAV container
-        response_text — transcript of what Gemini said (may be empty if
-                        output_audio_transcription isn't supported on the
-                        active billing tier)
-    """
-    client = _live_client()
-
-    # Inject conversation history into system prompt so each new session
-    # feels like a continuous conversation
-    history_block = ""
-    if history:
-        lines = []
-        for h in history[-10:]:  # last 5 back-and-forths
-            speaker = "User" if h["role"] == "user" else "You"
-            lines.append(f"{speaker}: {h['text']}")
-        history_block = "\n\nCONVERSATION SO FAR:\n" + "\n".join(lines)
-
-    full_system = system_prompt + history_block
-
-    config = types.LiveConnectConfig(
-        system_instruction=types.Content(
-            parts=[types.Part(text=full_system)]
-        ),
+def _build_config(full_system: str, disable_vad: bool = False) -> types.LiveConnectConfig:
+    kwargs: dict = dict(
+        system_instruction=types.Content(parts=[types.Part(text=full_system)]),
         response_modalities=["AUDIO"],
         output_audio_transcription=types.AudioTranscriptionConfig(),
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=VOICE_NAME
-                )
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE_NAME)
             )
         ),
     )
+    if disable_vad:
+        # When we send a complete audio clip we control start/end ourselves,
+        # so server-side VAD must be disabled.
+        kwargs["realtime_input_config"] = types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(disabled=True)
+        )
+    return types.LiveConnectConfig(**kwargs)
+
+
+async def _webm_to_pcm(audio_bytes: bytes) -> bytes:
+    """Convert browser WebM/Opus audio to raw PCM 16 kHz mono s16le via ffmpeg."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-i", "pipe:0",
+        "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000",
+        "pipe:1",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    pcm_bytes, stderr = await proc.communicate(input=audio_bytes)
+    if proc.returncode != 0:
+        print(f"[gemini_live] ffmpeg error: {stderr.decode()}")
+        return b""
+    return pcm_bytes
+
+def _history_block(history: list[dict]) -> str:
+    if not history:
+        return ""
+    lines = [
+        f"{'User' if h['role'] == 'user' else 'You'}: {h['text']}"
+        for h in history[-10:]
+    ]
+    return "\n\nCONVERSATION SO FAR:\n" + "\n".join(lines)
+
+def _write_pcm(wf: wave.Wave_write, raw) -> None:
+    if isinstance(raw, (bytes, bytearray)):
+        wf.writeframes(raw)
+    else:
+        s = raw + '=' * (-len(raw) % 4)
+        wf.writeframes(base64.b64decode(s))
+
+
+# ── Live conversation (audio input) ────────────────────────────────────────────
+
+async def live_respond_from_audio(
+    audio_bytes: bytes,
+    system_prompt: str,
+    history: list[dict],
+) -> tuple[bytes, str, str]:
+    """
+    Convert browser WebM audio → PCM with ffmpeg, then send to Gemini Live
+    via send_realtime_input (the correct Live API method for audio).
+
+    Returns:
+        (wav_bytes, user_transcript, response_text)
+        wav_bytes       — 24 kHz mono WAV of Gemini's spoken reply
+        user_transcript — empty string (Live API doesn't transcribe input audio
+                          in this flow; transcript is captured on the next turn)
+        response_text   — what Gemini said (from output_audio_transcription)
+    """
+    # Convert WebM/Opus → PCM 16 kHz mono (what Gemini Live expects)
+    pcm_bytes = await _webm_to_pcm(audio_bytes)
+    if not pcm_bytes:
+        print("[gemini_live] ffmpeg conversion failed — no PCM output")
+        return b"", "", ""
+
+    client = _live_client()
+    full_system = system_prompt + _history_block(history)
+    # disable_vad=True so we control turn boundaries with activity_start/end
+    config = _build_config(full_system, disable_vad=True)
 
     wav_buffer = io.BytesIO()
     wf = wave.open(wav_buffer, "wb")
     wf.setnchannels(1)
-    wf.setsampwidth(2)          # 16-bit
+    wf.setsampwidth(2)
     wf.setframerate(WAV_SAMPLE_RATE)
 
     response_text = ""
 
     try:
         async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
-            # Send just the current user message (history is in system prompt)
-            await session.send_client_content(
-                turns=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part(text=message)],
-                    )
-                ]
+            # Manually bracket the audio with activity signals so Gemini knows
+            # exactly when the user's turn starts and ends.
+            await session.send_realtime_input(activity_start=types.ActivityStart())
+            await session.send_realtime_input(
+                audio=types.Blob(data=pcm_bytes, mime_type="audio/pcm")
             )
+            await session.send_realtime_input(activity_end=types.ActivityEnd())
 
             async for msg in session.receive():
                 sc = msg.server_content
-                if sc and sc.model_turn:
+                if not sc:
+                    continue
+
+                if sc.model_turn:
                     for part in sc.model_turn.parts:
-                        # Collect PCM audio
                         if (
                             part.inline_data
                             and part.inline_data.mime_type.startswith("audio/pcm")
                         ):
-                            raw = part.inline_data.data
-                            # SDK may return raw bytes or a base64 string
-                            if isinstance(raw, (bytes, bytearray)):
-                                wf.writeframes(raw)
-                            else:
-                                # base64 string — add padding if needed
-                                s = raw + '=' * (-len(raw) % 4)
-                                wf.writeframes(base64.b64decode(s))
-                        # Collect text transcript (if available)
+                            _write_pcm(wf, part.inline_data.data)
                         if part.text:
                             response_text += part.text
 
-                if sc and getattr(sc, "turn_complete", False):
+                if getattr(sc, "turn_complete", False):
                     break
 
     except Exception as e:
-        print(f"[gemini_live] Live response error: {e}")
+        print(f"[gemini_live] live_respond_from_audio error: {e}")
+        traceback.print_exc()
+    finally:
+        wf.close()
+
+    return wav_buffer.getvalue(), "", response_text.strip()
+
+
+# ── Live conversation (text input) — kept for backwards compat ─────────────────
+
+async def live_respond(
+    message: str,
+    system_prompt: str,
+    history: list[dict],
+) -> tuple[bytes, str]:
+    """Text-turn version. Returns (wav_bytes, response_text)."""
+    client = _live_client()
+    full_system = system_prompt + _history_block(history)
+    config = _build_config(full_system)
+
+    wav_buffer = io.BytesIO()
+    wf = wave.open(wav_buffer, "wb")
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(WAV_SAMPLE_RATE)
+    response_text = ""
+
+    try:
+        async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
+            await session.send_client_content(
+                turns=[types.Content(role="user", parts=[types.Part(text=message)])]
+            )
+            async for msg in session.receive():
+                sc = msg.server_content
+                if sc and sc.model_turn:
+                    for part in sc.model_turn.parts:
+                        if part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
+                            _write_pcm(wf, part.inline_data.data)
+                        if part.text:
+                            response_text += part.text
+                if sc and getattr(sc, "turn_complete", False):
+                    break
+    except Exception as e:
+        print(f"[gemini_live] live_respond error: {e}")
         traceback.print_exc()
     finally:
         wf.close()
