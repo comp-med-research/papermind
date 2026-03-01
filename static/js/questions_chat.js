@@ -109,8 +109,15 @@ async function _sendRegular(question) {
         });
         const data = await response.json();
         hideTypingIndicator();
-        if (data.answer) {
-            addMessage('ai', data.answer, {
+
+        if (!response.ok || data.error) {
+            addMessage('ai', `❌ ${data.error || 'Something went wrong'}`);
+            return;
+        }
+
+        const hasMedia = data.video_url || data.image_url;
+        if (data.answer || hasMedia) {
+            addMessage('ai', data.answer || '', {
                 sources: data.sources,
                 imageUrl: data.image_url,
                 videoUrl: data.video_url,

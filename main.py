@@ -323,8 +323,8 @@ def text_to_speech(text: str, voice_id: str | None = None) -> bytes:
                 "taskUUID": task_uuid,
                 "model": "elevenlabs:24@1",  # Eleven Flash v2.5 - fast, natural speech
                 "speech": speech,
-                "outputType": "base64Data",
-                "outputFormat": "MP3",  # Must be uppercase
+                "outputType": "URL",
+                "outputFormat": "MP3",
                 "numberResults": 1,
                 "audioSettings": {
                     "sampleRate": 44100,
@@ -332,18 +332,25 @@ def text_to_speech(text: str, voice_id: str | None = None) -> bytes:
                 }
             }]
         )
-        
+
         data = response.json()
-        
-        if "data" in data and len(data["data"]) > 0:
-            audio_base64 = data["data"][0].get("audioBase64Data")
-            if audio_base64:
-                return base64.b64decode(audio_base64)
-        
-        # fallback: return empty audio if generation fails
-        print(f"Runware TTS error: {data}")
+        results = data.get("data", [])
+        if results:
+            item = results[0]
+            # URL output type — fetch the audio bytes from the returned URL
+            audio_url = item.get("audioURL") or item.get("audioUrl")
+            if audio_url:
+                audio_resp = requests.get(audio_url, timeout=30)
+                if audio_resp.ok:
+                    return audio_resp.content
+            # base64 fallback (if API returns base64 despite outputType=URL)
+            b64 = item.get("audioBase64Data") or item.get("audioBase64")
+            if b64:
+                return base64.b64decode(b64)
+
+        print(f"Runware TTS unexpected response: {data}")
         return b""
-        
+
     except Exception as e:
         print(f"Runware TTS error: {e}")
         return b""
@@ -384,14 +391,17 @@ async def start_reading(session_id: str = "default"):
     """Start or resume reading — returns next sentence + audio"""
     state = sessions.get(session_id)
     if not state:
-        return {"error": "No session found. Upload a PDF first."}
+        return JSONResponse(status_code=400, content={"error": "No session found. Upload a PDF first."})
 
-    result = handle_start(state)
+    try:
+        result = handle_start(state)
+    except Exception as e:
+        print(f"/start error: {e}")
+        return JSONResponse(status_code=500, content={"error": f"Reading agent failed: {str(e)}"})
 
     if result.get("done"):
         return {"done": True, "message": "Paper complete!"}
 
-    # generate audio for the sentence
     audio = text_to_speech(result["sentence"])
 
     return {
@@ -399,7 +409,7 @@ async def start_reading(session_id: str = "default"):
         "position": state.position,
         "proactive_flag": result.get("proactive_flag", False),
         "flag_message": result.get("flag_message"),
-        "audio_b64": audio.hex()  # send as hex, frontend converts to audio
+        "audio_b64": audio.hex()
     }
 
 
@@ -416,7 +426,9 @@ async def interrupt(req: InterruptRequest):
     page_text_map = page_texts.get(req.session_id, {})
 
     if not state:
-        return {"error": "No session found"}
+        if not full_text:
+            return JSONResponse(status_code=400, content={"error": "No document found. Upload a PDF first."})
+        state = SessionState([])  # minimal fallback — RAG context still available
 
     rag = rag_indexes.get(req.session_id)
     rag_retriever = rag.retrieve if rag else None
@@ -471,12 +483,14 @@ async def interrupt_stream(req: InterruptRequest):
     Only streams text; image generation (if requested) is appended in the done event.
     """
     state = sessions.get(req.session_id)
-    if not state:
-        async def _err():
-            yield f"data: {json.dumps({'error': 'No session found. Upload a PDF first.'})}\n\n"
-        return StreamingResponse(_err(), media_type="text/event-stream")
-
     full_text = full_texts.get(req.session_id, "")
+    if not state:
+        if not full_text:
+            async def _err():
+                yield f"data: {json.dumps({'error': 'No document found. Upload a PDF first.'})}\n\n"
+            return StreamingResponse(_err(), media_type="text/event-stream")
+        state = SessionState([])  # minimal fallback — RAG context still available
+
     rag = rag_indexes.get(req.session_id)
     rag_retriever = rag.retrieve if rag else None
 
@@ -932,9 +946,13 @@ async def resume_reading(session_id: str = "default"):
     """User said 'continue' — resume from exact position"""
     state = sessions.get(session_id)
     if not state:
-        return {"error": "No session found"}
+        return JSONResponse(status_code=400, content={"error": "No session found. Upload a PDF first."})
 
-    result = handle_resume(state)
+    try:
+        result = handle_resume(state)
+    except Exception as e:
+        print(f"/resume error: {e}")
+        return JSONResponse(status_code=500, content={"error": f"Reading agent failed: {str(e)}"})
 
     if result.get("done"):
         return {"done": True}
@@ -1065,8 +1083,18 @@ Guidelines:
         history = history + [{"role": "model", "text": response_text}]
     live_histories[req.session_id] = history[-20:]
 
+    # Prefer sources retrieved from the current transcript (available now that Gemini
+    # has returned it). Fall back to the pre-turn chunks used to build the context.
+    current_chunks: list = []
+    if rag and user_transcript:
+        try:
+            current_chunks = rag.retrieve(user_transcript, top_k=3)
+        except Exception:
+            pass
+    source_chunks = current_chunks or retrieved_chunks
+
     sources_with_pages = []
-    for chunk_text, page_num in retrieved_chunks[:3]:
+    for chunk_text, page_num in source_chunks[:3]:
         excerpt = (chunk_text[:150] + "…") if len(chunk_text) > 150 else chunk_text
         sources_with_pages.append({"text": excerpt.strip(), "page": page_num})
 

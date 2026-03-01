@@ -37,12 +37,20 @@ export async function startReading() {
 
         const data = await response.json();
 
+        if (!response.ok || data.error) {
+            addSystemMessage('❌ ' + (data.error || data.detail || `Server error ${response.status}`));
+            state.isReading = false;
+            updatePlayPauseButton();
+            return;
+        }
+
         if (data.done) {
             addSystemMessage('🎉 Paper complete! Great job!');
             hideReadingIndicator();
             clearHighlights();
             updateReadingStatus(null, false);
             state.currentSentence = null;
+            state.isReading = false;
             updatePlayPauseButton();
             return;
         }
@@ -51,27 +59,26 @@ export async function startReading() {
             addSystemMessage('⚠️ ' + data.flag_message);
         }
 
-        // Update reading status
         updateReadingStatus(data.sentence, true);
-
-        // Update progress
         updateProgress(data.position);
-
-        // Highlight the sentence in PDF
         highlightSentence(data.sentence);
 
-        // Store current sentence + set reading state BEFORE playAudio
-        // so onended auto-advance works even for very short audio
+        // Set state BEFORE playAudio so onended auto-advance works for short audio
         state.currentSentence = data.sentence;
         state.isReading = true;
         updatePlayPauseButton();
 
-        // Play audio
         if (data.audio_b64) {
             playAudio(data.audio_b64, data.sentence);
+        } else {
+            // TTS unavailable — display sentence and advance automatically after a pause
+            addSystemMessage(`📖 ${data.sentence}`);
+            setTimeout(() => { if (state.isReading) startReading(); }, 3000);
         }
 
     } catch (error) {
+        state.isReading = false;
+        updatePlayPauseButton();
         addSystemMessage('❌ Error starting reading: ' + error.message);
     }
 }
@@ -98,22 +105,26 @@ export async function resumeReading() {
 
         const data = await response.json();
 
+        if (!response.ok || data.error) {
+            addSystemMessage('❌ ' + (data.error || data.detail || `Server error ${response.status}`));
+            state.isReading = false;
+            updatePlayPauseButton();
+            return;
+        }
+
         if (data.done) {
             addSystemMessage('🎉 Paper complete!');
             hideReadingIndicator();
             clearHighlights();
             updateReadingStatus(null, false);
             state.currentSentence = null;
+            state.isReading = false;
             updatePlayPauseButton();
             return;
         }
 
-        // Update reading status
         updateReadingStatus(data.sentence, true);
-
         updateProgress(data.position);
-
-        // Highlight the sentence in PDF
         highlightSentence(data.sentence);
 
         state.currentSentence = data.sentence;
@@ -122,11 +133,16 @@ export async function resumeReading() {
 
         if (data.audio_b64) {
             playAudio(data.audio_b64, data.sentence);
+        } else {
+            addSystemMessage(`📖 ${data.sentence}`);
+            setTimeout(() => { if (state.isReading) resumeReading(); }, 3000);
         }
 
         addSystemMessage('▶️ Reading resumed');
 
     } catch (error) {
+        state.isReading = false;
+        updatePlayPauseButton();
         addSystemMessage('❌ Error resuming reading: ' + error.message);
     }
 }
