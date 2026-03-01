@@ -82,6 +82,7 @@ async function _sendStreaming(question) {
                             sources: event.sources,
                             embeddingBackend: event.embedding_backend,
                             imageUrl: event.image_url,
+                            videoUrl: event.video_url,
                         });
                     }
                 }

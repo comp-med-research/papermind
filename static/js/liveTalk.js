@@ -199,7 +199,7 @@ async function onRecordingDone() {
         if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
 
         if (data.user_transcript) addMessage('user', data.user_transcript);
-        if (data.response_transcript) addMessage('ai', data.response_transcript);
+        if (data.response_transcript) addMessage('ai', data.response_transcript, { sources: data.sources });
 
         if (data.audio_base64 && sessionActive) {
             await playResponse(data.audio_base64);

@@ -106,65 +106,201 @@ def generate_image(prompt: str) -> str | None:
         return None
 
 
-def generate_video(prompt: str, max_wait_seconds: int = 180, poll_interval: int = 3) -> str | None:
-    """Call Runware to generate a short educational video. Uses async + polling."""
+def claude_image_prompt(explanation: str, selected_text: str) -> str:
+    """
+    Ask Claude to turn a Nemotron explanation into a focused Runware image-generation
+    prompt. Returns the prompt string (falls back to a simple truncated version).
+    """
     try:
-        task_uuid = str(uuid.uuid4())
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=120,
+            system=(
+                "You write short, precise image-generation prompts for an AI image model (Runware/FLUX). "
+                "Given a scientific explanation, output ONLY the image prompt — no preamble, no quotes. "
+                "The prompt should describe a clear educational diagram or infographic that visually "
+                "represents the core concept. Specify style (e.g. 'flat vector diagram', 'infographic', "
+                "'scientific illustration'), key visual elements, and white or light background. "
+                "Keep it under 80 words. Do NOT include any text labels or speech bubbles in the description."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Selected text from paper: \"{selected_text[:300]}\"\n\n"
+                    f"Explanation: {explanation[:600]}\n\n"
+                    "Write the Runware image prompt:"
+                ),
+            }],
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        print(f"claude_image_prompt error: {e}")
+        return explanation[:200]
+
+
+def claude_video_scenes(explanation: str, selected_text: str) -> dict:
+    """
+    Ask Claude to produce two things from a Nemotron explanation:
+      1. keyframe_prompt  — image prompt for a styled reference keyframe
+      2. video_prompt     — multi-shot video prompt with explicit "Shot N:" markers
+    Returns {"keyframe_prompt": str, "video_prompt": str}.
+    Falls back to truncated text on any error.
+    """
+    try:
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=450,
+            system=(
+                "You create prompts for AI video generation (Runware / KlingAI multi-shot). "
+                "Given a scientific explanation, output valid JSON with exactly two keys:\n\n"
+                "\"keyframe_prompt\": A single image-generation prompt (≤60 words) describing a clean "
+                "educational diagram that sets the visual style. Specify: flat vector infographic style, "
+                "white background, a consistent color palette (e.g. blue/teal/white), and the central "
+                "concept as a simple diagram. No text or labels in the image.\n\n"
+                "\"video_prompt\": A multi-shot video prompt (≤180 words) with 3-4 sequential scenes "
+                "prefixed 'Shot 1:', 'Shot 2:', etc. Each shot shows one distinct visual idea from the "
+                "explanation — diagrams assembling, arrows flowing, components animating. Use the same "
+                "infographic style throughout. End with a wide shot showing the full concept. "
+                "Describe motion, not static images (e.g. 'arrows slide in', 'box expands', 'diagram "
+                "assembles piece by piece'). No narration text or subtitles.\n\n"
+                "Output ONLY the JSON object. No markdown fences, no extra keys."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Selected text from paper: \"{selected_text[:300]}\"\n\n"
+                    f"Explanation: {explanation[:700]}\n\n"
+                    "Output JSON:"
+                ),
+            }],
+        )
+        import json as _json
+        raw = response.content[0].text.strip()
+        result = _json.loads(raw)
+        return {
+            "keyframe_prompt": str(result.get("keyframe_prompt", explanation[:150])),
+            "video_prompt":    str(result.get("video_prompt",    explanation[:200])),
+        }
+    except Exception as e:
+        print(f"claude_video_scenes error: {e}")
+        return {
+            "keyframe_prompt": explanation[:150],
+            "video_prompt":    explanation[:200],
+        }
+
+
+def generate_educational_video(
+    explanation: str,
+    selected_text: str,
+    max_wait_seconds: int = 180,
+) -> str | None:
+    """
+    Full educational video pipeline:
+      1. Claude breaks the explanation into a keyframe prompt + multi-shot video prompt.
+      2. Generate a keyframe image for display alongside the video.
+      3. Submit a Wan text-to-video job with:
+           - multi-shot mode (providerSettings.alibaba.shotType = "multi")
+           - promptExtend = true (LLM-based prompt rewriting for coherence)
+      4. Poll until complete and return the video URL.
+    Note: alibaba:wan@2.6 does not support frameImages (image-to-video); the
+    keyframe is shown in the UI as a visual reference only.
+    """
+    # Step 1 — Claude scene breakdown
+    scenes = claude_video_scenes(explanation, selected_text)
+    print(f"🎬 Keyframe prompt: {scenes['keyframe_prompt'][:100]}")
+    print(f"🎬 Video prompt:    {scenes['video_prompt'][:120]}")
+
+    # Step 2 — Generate reference keyframe image
+    keyframe_url = generate_image(scenes["keyframe_prompt"])
+    if not keyframe_url:
+        print("🎬 Keyframe generation failed — falling back to text-only video")
+
+    # Step 3 — Submit video job
+    task_uuid = str(uuid.uuid4())
+    payload: dict = {
+        "taskType": "videoInference",
+        "taskUUID": task_uuid,
+        "deliveryMethod": "async",
+        # alibaba:wan supports providerSettings.alibaba (promptExtend + shotType).
+        # klingai models do NOT accept alibaba providerSettings — use Wan here.
+        "model": "alibaba:wan@2.6",
+        "positivePrompt": scenes["video_prompt"],
+        "negativePrompt": (
+            "blurry, low quality, distorted, flickering, jitter, photorealistic, "
+            "live action, people, faces, watermark, text overlay, subtitles"
+        ),
+        "duration": 10,
+        "width": 1280,
+        "height": 720,
+        "numberResults": 1,
+        "providerSettings": {
+            "alibaba": {
+                "promptExtend": True,  # LLM expands/rewrites prompt for coherence
+                "shotType": "multi",   # multi-shot with scene transitions
+            }
+        },
+    }
+    # frameImages (image-to-video) is not supported by alibaba:wan@2.6;
+    # keyframe is shown in the UI only.
+
+    try:
         response = requests.post(
             "https://api.runware.ai/v1",
             headers={"Authorization": f"Bearer {os.getenv('RUNWARE_API_KEY')}"},
-            json=[{
-                "taskType": "videoInference",
-                "taskUUID": task_uuid,
-                "deliveryMethod": "async",
-                "positivePrompt": f"Educational explainer video: {prompt}. Clear, professional, smooth motion, infographic style.",
-                "model": "klingai:5@3",
-                "duration": 5,
-                "width": 1920,
-                "height": 1080,
-                "numberResults": 1,
-            }]
+            json=[payload],
         )
         data = response.json()
-        if "errors" in data and len(data["errors"]) > 0:
-            print(f"Runware video submit error: {data['errors']}")
+        if "errors" in data and data["errors"]:
+            print(f"🎬 Video submit error: {data['errors']}")
             return None
-        print(f"Runware video: submitted {task_uuid}, waiting 10s before first poll...")
-        # Initial delay (video takes time to start); docs recommend this
-        time.sleep(10)
-        elapsed = 10
-        while elapsed < max_wait_seconds:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
+    except Exception as e:
+        print(f"🎬 Video submit exception: {e}")
+        return None
+
+    # Step 4 — Poll for result
+    return _poll_video(task_uuid, max_wait_seconds)
+
+
+def _poll_video(task_uuid: str, max_wait_seconds: int = 180, poll_interval: int = 3) -> str | None:
+    """Poll Runware getResponse until the video task completes or times out."""
+    print(f"🎬 Submitted {task_uuid}, waiting 10 s before first poll…")
+    time.sleep(10)
+    elapsed = 10
+    while elapsed < max_wait_seconds:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+        try:
             poll_resp = requests.post(
                 "https://api.runware.ai/v1",
                 headers={"Authorization": f"Bearer {os.getenv('RUNWARE_API_KEY')}"},
-                json=[{"taskType": "getResponse", "taskUUID": task_uuid}]
+                json=[{"taskType": "getResponse", "taskUUID": task_uuid}],
             )
             poll_data = poll_resp.json()
-            # Check errors array — failed tasks appear here
-            if "errors" in poll_data and len(poll_data["errors"]) > 0:
-                for err in poll_data["errors"]:
-                    if err.get("taskUUID") == task_uuid:
-                        print(f"Runware video failed: {err}")
-                        return None
-                print(f"Runware poll errors: {poll_data['errors']}")
-            if "data" in poll_data and len(poll_data["data"]) > 0:
-                item = poll_data["data"][0]
-                status = item.get("status", "")
-                print(f"Runware video: poll at {elapsed}s, status={status}")
-                if status == "success":
-                    return item.get("videoURL")
-                if status == "error":
-                    print(f"Runware video error: {item}")
+        except Exception as e:
+            print(f"🎬 Poll exception: {e}")
+            continue
+
+        if "errors" in poll_data and poll_data["errors"]:
+            for err in poll_data["errors"]:
+                if err.get("taskUUID") == task_uuid:
+                    print(f"🎬 Video failed: {err}")
                     return None
-            else:
-                print(f"Runware video: poll at {elapsed}s, no data yet (still processing)")
-        print("Runware video: timeout waiting for result")
-        return None
-    except Exception as e:
-        print(f"Runware video error: {e}")
-        return None
+        if "data" in poll_data and poll_data["data"]:
+            item = poll_data["data"][0]
+            status = item.get("status", "")
+            print(f"🎬 Poll at {elapsed}s — status: {status}")
+            if status == "success":
+                return item.get("videoURL")
+            if status == "error":
+                print(f"🎬 Video error item: {item}")
+                return None
+        else:
+            print(f"🎬 Poll at {elapsed}s — still processing")
+    print("🎬 Timeout waiting for video")
+    return None
+
 
 
 # ElevenLabs voice IDs: Rachel (female host), Adam (male guest)
@@ -318,8 +454,10 @@ async def interrupt(req: InterruptRequest):
         response["image_url"] = image_url
     
     if "video" in req.response_types:
-        prompt = result.get("visual_prompt") or result["answer"] or req.question[:200]
-        video_url = generate_video(prompt)
+        video_url = generate_educational_video(
+            explanation=result["answer"],
+            selected_text=req.question,
+        )
         response["video_url"] = video_url
 
     return response
@@ -433,13 +571,20 @@ async def interrupt_stream(req: InterruptRequest):
         )
         print(f"📚 RAG pathway (stream): {embedding_backend}")
 
-        # Generate image if requested (non-streaming, appended to done event)
+        # Generate image/video if requested (non-streaming, appended to done event)
         image_url = None
         if "image" in req.response_types:
             prompt = visual_prompt or answer[:200]
             image_url = generate_image(prompt)
 
-        yield f"data: {json.dumps({'done': True, 'sources': sources_with_pages, 'embedding_backend': embedding_backend, 'image_url': image_url, 'resume_position': state.position})}\n\n"
+        video_url = None
+        if "video" in req.response_types:
+            video_url = generate_educational_video(
+                explanation=answer,
+                selected_text=req.question,
+            )
+
+        yield f"data: {json.dumps({'done': True, 'sources': sources_with_pages, 'embedding_backend': embedding_backend, 'image_url': image_url, 'video_url': video_url, 'resume_position': state.position})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -508,13 +653,114 @@ class ExplainSelectionRequest(BaseModel):
     session_id: str = "default"
 
 
+@app.post("/explain-selection/stream")
+async def explain_selection_stream(req: ExplainSelectionRequest):
+    """
+    Streaming version of /explain-selection.
+    Streams text tokens via SSE, then emits a 'done' event that includes
+    audio_base64 (audio type) or image_url (image type).
+    Video is not streamed — use the regular /explain-selection endpoint.
+    """
+    sess = sessions.get(req.session_id)
+    # Session may be absent if the server restarted after upload (in-memory store).
+    # For explain-selection we only need RAG context, so a minimal fallback is fine.
+    if not sess:
+        full_text_check = full_texts.get(req.session_id, "")
+        if not full_text_check:
+            async def _err():
+                yield f"data: {json.dumps({'error': 'No document found. Upload a PDF first.'})}\n\n"
+            return StreamingResponse(_err(), media_type="text/event-stream")
+        sess = SessionState([])  # minimal state — no conversation history
+
+    text = req.selected_text.strip()
+    if not text or len(text) < 5:
+        async def _err():
+            yield f"data: {json.dumps({'error': 'Select more text to explain'})}\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
+    if len(text) > 2000:
+        text = text[:2000] + "..."
+
+    question = f"Explain this excerpt from the paper in simple, clear terms: \"{text}\""
+    rag = rag_indexes.get(req.session_id)
+    rag_retriever = rag.retrieve if rag else None
+    messages, _ = prepare_conversation_context(question, sess, rag_retriever)
+    model = os.getenv("NEMOTRON_CONVERSATION_MODEL", os.getenv("NEMOTRON_MODEL", "nvidia/nemotron-3-nano"))
+
+    async def generate():
+        chunk_queue: stdlib_queue.Queue = stdlib_queue.Queue()
+
+        def _stream():
+            try:
+                stream = nemotron.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=400,
+                    temperature=0.4,
+                    stream=True,
+                )
+                accumulated = ""
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        accumulated += delta
+                        chunk_queue.put(("text", delta))
+                chunk_queue.put(("done", accumulated))
+            except Exception as exc:
+                chunk_queue.put(("error", str(exc)))
+
+        threading.Thread(target=_stream, daemon=True).start()
+
+        full_answer = ""
+        final_type = final_data = None
+
+        while final_type is None:
+            try:
+                final_type, final_data = chunk_queue.get_nowait()
+            except stdlib_queue.Empty:
+                await asyncio.sleep(0.01)
+                continue
+            if final_type == "text":
+                full_answer += final_data
+                yield f"data: {json.dumps({'text': final_data})}\n\n"
+                await asyncio.sleep(0)
+                final_type = None  # keep looping
+
+        if final_type == "error":
+            yield f"data: {json.dumps({'error': final_data})}\n\n"
+            return
+
+        answer = full_answer.strip()
+        embedding_backend = (
+            rag.get_embedding_backend() if rag and hasattr(rag, "get_embedding_backend") else "none"
+        )
+        done_payload: dict = {"done": True, "embedding_backend": embedding_backend}
+
+        if req.explain_type == "audio":
+            audio = text_to_speech(answer)
+            done_payload["audio_base64"] = base64.b64encode(audio).decode() if audio else None
+        elif req.explain_type == "image":
+            img_prompt = claude_image_prompt(answer, req.selected_text)
+            print(f"🎨 Image prompt (Claude): {img_prompt[:120]}")
+            done_payload["image_url"] = generate_image(img_prompt)
+
+        yield f"data: {json.dumps(done_payload)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/explain-selection")
 async def explain_selection(req: ExplainSelectionRequest):
     """Explain selected PDF text via text, audio, image, or video (Nemotron + Runware)."""
     state = sessions.get(req.session_id)
     full_text = full_texts.get(req.session_id, "")
     if not state:
-        return JSONResponse(status_code=400, content={"error": "No session found"})
+        if not full_text:
+            return JSONResponse(status_code=400, content={"error": "No document found. Upload a PDF first."})
+        state = SessionState([])  # minimal fallback — RAG context still available
     text = req.selected_text.strip()
     if not text or len(text) < 5:
         return JSONResponse(status_code=400, content={"error": "Select more text to explain"})
@@ -534,12 +780,12 @@ async def explain_selection(req: ExplainSelectionRequest):
         audio = text_to_speech(result["answer"])
         out["audio_base64"] = base64.b64encode(audio).decode() if audio else None
     elif req.explain_type == "image":
-        prompt = result.get("visual_prompt") or result["answer"] or text[:200]
-        img_url = generate_image(prompt)
+        img_prompt = claude_image_prompt(result["answer"], text)
+        print(f"🎨 Image prompt (Claude): {img_prompt[:120]}")
+        img_url = generate_image(img_prompt)
         out["image_url"] = img_url
     elif req.explain_type == "video":
-        prompt = result.get("visual_prompt") or result["answer"] or text[:200]
-        video_url = generate_video(prompt)
+        video_url = generate_educational_video(result["answer"], text)
         out["video_url"] = video_url
     return out
 
@@ -573,18 +819,45 @@ async def export_podcast(req: ExportPodcastRequest):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-def _generate_video_overview_prompt(full_text: str) -> str:
-    """Use Claude to create a short video prompt summarizing the paper."""
+def _generate_video_overview_prompt(full_text: str) -> dict:
+    """
+    Use Claude to produce a keyframe image prompt + multi-shot video prompt
+    that summarises the whole paper visually.
+    Returns {"keyframe_prompt": str, "video_prompt": str}.
+    """
     text = full_text[:16_000] + ("..." if len(full_text) > 16_000 else "")
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=300,
-        system="""You create short prompts for AI video generation. Given a research paper summary, output 2-3 sentences describing a visual overview: key concept, main finding, or central idea. Describe what to SHOW (diagrams, animations, concepts). Be concrete. No narration text—just visual description. Output ONLY the prompt, nothing else.""",
-        messages=[{"role": "user", "content": text}],
-        temperature=0.5,
-    )
-    return response.content[0].text.strip()[:500]
+    try:
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=500,
+            system=(
+                "You create prompts for AI video generation (Runware / KlingAI multi-shot). "
+                "Given a research paper, output valid JSON with exactly two keys:\n\n"
+                "\"keyframe_prompt\": A single image-generation prompt (≤60 words) for a clean "
+                "educational diagram that captures the paper's core contribution. Flat vector "
+                "infographic style, white background, consistent blue/teal color palette. No text labels.\n\n"
+                "\"video_prompt\": A multi-shot video prompt (≤200 words) with 4 sequential scenes "
+                "prefixed 'Shot 1:', 'Shot 2:', 'Shot 3:', 'Shot 4:'. Cover: problem motivation, "
+                "proposed method/architecture, key results, and broader impact. Each shot shows one "
+                "visual idea animating (diagrams assembling, arrows flowing, charts building). "
+                "Same infographic style throughout. No narration text or subtitles.\n\n"
+                "Output ONLY the JSON object. No markdown fences."
+            ),
+            messages=[{"role": "user", "content": f"Research paper:\n\n{text}\n\nOutput JSON:"}],
+        )
+        import json as _json
+        result = _json.loads(response.content[0].text.strip())
+        return {
+            "keyframe_prompt": str(result.get("keyframe_prompt", text[:150])),
+            "video_prompt":    str(result.get("video_prompt",    text[:200])),
+        }
+    except Exception as e:
+        print(f"_generate_video_overview_prompt error: {e}")
+        return {
+            "keyframe_prompt": full_text[:150],
+            "video_prompt":    full_text[:200],
+        }
 
 
 class ExportVideoOverviewRequest(BaseModel):
@@ -593,7 +866,7 @@ class ExportVideoOverviewRequest(BaseModel):
 
 @app.post("/export-video-overview")
 async def export_video_overview(req: ExportVideoOverviewRequest):
-    """Generate a 5-second video overview of the paper. Takes 2–4 minutes."""
+    """Generate a 10-second multi-shot video overview of the paper. Takes 2–4 minutes."""
     print("Video overview: Request received...")
     full_text = full_texts.get(req.session_id, "")
     if not full_text:
@@ -603,11 +876,51 @@ async def export_video_overview(req: ExportVideoOverviewRequest):
         )
 
     try:
-        prompt = _generate_video_overview_prompt(full_text)
-        print(f"Video overview: Prompt: {prompt[:80]}...")
-        video_url = generate_video(prompt, max_wait_seconds=300)
+        scenes = _generate_video_overview_prompt(full_text)
+        print(f"🎬 Overview keyframe: {scenes['keyframe_prompt'][:80]}…")
+        print(f"🎬 Overview video:    {scenes['video_prompt'][:100]}…")
+
+        # Keyframe image anchors the visual style for the whole video
+        keyframe_url = generate_image(scenes["keyframe_prompt"])
+        print(f"🎬 Keyframe URL: {keyframe_url}")
+
+        task_uuid = str(uuid.uuid4())
+        payload: dict = {
+            "taskType": "videoInference",
+            "taskUUID": task_uuid,
+            "deliveryMethod": "async",
+            "model": "alibaba:wan@2.6",
+            "positivePrompt": scenes["video_prompt"],
+            "negativePrompt": (
+                "blurry, low quality, distorted, flickering, jitter, photorealistic, "
+                "live action, people, faces, watermark, text overlay, subtitles"
+            ),
+            "duration": 10,
+            "width": 1280,
+            "height": 720,
+            "numberResults": 1,
+            "providerSettings": {
+                "alibaba": {
+                    "promptExtend": True,
+                    "shotType": "multi",
+                }
+            },
+        }
+        # frameImages not supported by alibaba:wan@2.6 — keyframe shown in UI only.
+
+        response = requests.post(
+            "https://api.runware.ai/v1",
+            headers={"Authorization": f"Bearer {os.getenv('RUNWARE_API_KEY')}"},
+            json=[payload],
+        )
+        data = response.json()
+        if "errors" in data and data["errors"]:
+            print(f"🎬 Overview submit error: {data['errors']}")
+            return JSONResponse(status_code=500, content={"error": "Video submission failed"})
+
+        video_url = _poll_video(task_uuid, max_wait_seconds=300)
         if not video_url:
-            return JSONResponse(status_code=500, content={"error": "Video generation failed"})
+            return JSONResponse(status_code=500, content={"error": "Video generation failed or timed out"})
         return {"video_url": video_url}
     except Exception as e:
         print(f"Video overview error: {e}")
@@ -700,11 +1013,13 @@ async def live_talk(req: LiveTalkRequest):
     # (we don't have the current transcript yet — it comes back from Gemini).
     # This keeps latency low while still providing relevant context.
     context = ""
+    retrieved_chunks: list = []
     last_user_msg = next((h["text"] for h in reversed(history) if h["role"] == "user"), None)
     if rag and last_user_msg:
         try:
             chunks = rag.retrieve(last_user_msg, top_k=3)
             if chunks:
+                retrieved_chunks = chunks
                 context = "\n\n".join([
                     f'"{text.strip()}" [p.{page}]' for text, page in chunks
                 ])
@@ -750,10 +1065,16 @@ Guidelines:
         history = history + [{"role": "model", "text": response_text}]
     live_histories[req.session_id] = history[-20:]
 
+    sources_with_pages = []
+    for chunk_text, page_num in retrieved_chunks[:3]:
+        excerpt = (chunk_text[:150] + "…") if len(chunk_text) > 150 else chunk_text
+        sources_with_pages.append({"text": excerpt.strip(), "page": page_num})
+
     return {
         "user_transcript": user_transcript or None,
         "response_transcript": response_text,
         "audio_base64": base64.b64encode(wav_bytes).decode(),
+        "sources": sources_with_pages,
     }
 
 

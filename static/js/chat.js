@@ -359,6 +359,15 @@ export function createStreamingMessage() {
                 visualDiv.appendChild(img);
                 messageContent.appendChild(visualDiv);
             }
+            if (opts.videoUrl) {
+                const visualDiv = document.createElement('div');
+                visualDiv.className = 'message-visual';
+                const video = document.createElement('video');
+                video.src = opts.videoUrl;
+                video.controls = true;
+                visualDiv.appendChild(video);
+                messageContent.appendChild(visualDiv);
+            }
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
     };

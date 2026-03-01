@@ -1,5 +1,5 @@
 import { API_URL, state } from './config.js';
-import { addMessage, showTypingIndicator, hideTypingIndicator } from './chat.js';
+import { addMessage, createStreamingMessage, showTypingIndicator, hideTypingIndicator } from './chat.js';
 import { renderQuizInChat } from './quiz.js';
 
 let menuEl = null;
@@ -100,9 +100,91 @@ async function quizSelection(selectedText) {
 }
 
 async function explainSelection(selectedText, explainType) {
-    addMessage('user', `Explain: "${selectedText.substring(0, 80)}${selectedText.length > 80 ? '...' : ''}"`);
-    showTypingIndicator();
+    const snippet = `Explain: "${selectedText.substring(0, 80)}${selectedText.length > 80 ? '...' : ''}"`;
+    addMessage('user', snippet);
 
+    // Video generation takes 2+ minutes — use the regular (non-streaming) endpoint.
+    // Everything else (text, audio, image) streams text immediately, with the
+    // heavyweight asset (audio_base64 / image_url) arriving in the done event.
+    if (explainType === 'video') {
+        await _explainRegular(selectedText, explainType);
+    } else {
+        await _explainStreaming(selectedText, explainType);
+    }
+}
+
+async function _explainStreaming(selectedText, explainType) {
+    showTypingIndicator();
+    let streamingMsg = null;
+
+    try {
+        const res = await fetch(`${API_URL}/explain-selection/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                selected_text: selectedText,
+                explain_type: explainType,
+                session_id: state.sessionId,
+            }),
+        });
+
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamStarted = false;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const raw = line.slice(6).trim();
+                if (!raw) continue;
+
+                let event;
+                try { event = JSON.parse(raw); } catch { continue; }
+
+                if (event.error) {
+                    hideTypingIndicator();
+                    if (streamingMsg) streamingMsg.finalize({ error: event.error });
+                    else addMessage('assistant', `❌ ${event.error}`);
+                    return;
+                }
+
+                if (event.text) {
+                    if (!streamStarted) {
+                        hideTypingIndicator();
+                        streamingMsg = createStreamingMessage();
+                        streamStarted = true;
+                    }
+                    streamingMsg.appendText(event.text);
+                }
+
+                if (event.done && streamingMsg) {
+                    streamingMsg.finalize({
+                        embeddingBackend: event.embedding_backend,
+                        audioBase64:      event.audio_base64  || null,
+                        imageUrl:         event.image_url     || null,
+                    });
+                }
+            }
+        }
+    } catch (e) {
+        hideTypingIndicator();
+        if (streamingMsg) streamingMsg.finalize({ error: e.message });
+        else addMessage('assistant', 'Error: ' + e.message);
+    }
+}
+
+async function _explainRegular(selectedText, explainType) {
+    showTypingIndicator();
     try {
         const res = await fetch(`${API_URL}/explain-selection`, {
             method: 'POST',
@@ -123,14 +205,7 @@ async function explainSelection(selectedText, explainType) {
         }
 
         const opts = { embeddingBackend: data.embedding_backend };
-        if (data.image_url)    opts.imageUrl    = data.image_url;
-        if (data.video_url)    opts.videoUrl    = data.video_url;
-        // For audio type: pass the audio to addMessage so the read-aloud
-        // button auto-starts and the user can pause/resume from it
-        if (explainType === 'audio' && data.audio_base64) {
-            opts.audioBase64 = data.audio_base64;
-        }
-
+        if (data.video_url) opts.videoUrl = data.video_url;
         addMessage('assistant', data.answer || 'No explanation generated.', opts);
     } catch (e) {
         hideTypingIndicator();
